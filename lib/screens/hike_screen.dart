@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/hike_track.dart';
 import '../services/hike_service.dart';
+import '../widgets/activity_map.dart';
 
 /// Fitness activity tracking screen with GPS logging and live stats.
 class HikeScreen extends StatelessWidget {
@@ -194,66 +195,63 @@ class _TrackingView extends StatelessWidget {
           ),
         ),
 
-        // Stats grid
+        // Map + Stats
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(12),
             child: Column(
               children: [
-                Row(children: [
-                  _StatCard(
-                    icon: Icons.straighten, label: 'Distance',
-                    value: track.totalDistanceKm < 1
-                        ? '${track.totalDistanceMeters.toStringAsFixed(0)} m'
-                        : '${track.totalDistanceKm.toStringAsFixed(2)} km',
-                  ),
-                  const SizedBox(width: 12),
-                  _StatCard(
-                    icon: Icons.speed, label: 'Avg Speed',
-                    value: '${track.avgSpeedKmh.toStringAsFixed(1)} km/h',
-                  ),
-                ]),
-                const SizedBox(height: 12),
-                Row(children: [
-                  _StatCard(
-                    icon: Icons.terrain, label: 'Altitude',
-                    value: '${track.currentAltitude.toStringAsFixed(0)} m',
-                  ),
-                  const SizedBox(width: 12),
-                  _StatCard(
-                    icon: Icons.trending_up, label: 'Elev. Gain',
-                    value: '${track.elevationGain.toStringAsFixed(0)} m',
-                  ),
-                ]),
-                const SizedBox(height: 12),
-                Row(children: [
-                  _StatCard(
-                    icon: Icons.location_on, label: 'Waypoints',
-                    value: '${track.waypoints.length}',
-                  ),
-                  const SizedBox(width: 12),
-                  _StatCard(
-                    icon: Icons.gps_fixed, label: 'GPS Accuracy',
-                    value: hike.lastPosition != null
-                        ? '${hike.lastPosition!.accuracy.toStringAsFixed(0)} m'
-                        : '—',
-                  ),
-                ]),
-                const Spacer(),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: () => _confirmStop(context),
-                    icon: const Icon(Icons.stop, size: 28),
-                    label: Text('Stop ${track.activityType.label}',
-                        style: const TextStyle(fontSize: 18)),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      backgroundColor: Colors.red[700],
-                    ),
+                // Live map
+                Expanded(
+                  flex: 3,
+                  child: ActivityMap(
+                    waypoints: track.waypoints,
+                    isLive: true,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
+
+                // Compact stats
+                Expanded(
+                  flex: 2,
+                  child: Column(
+                    children: [
+                      Row(children: [
+                        _StatCard(
+                          icon: Icons.straighten, label: 'Distance',
+                          value: track.totalDistanceKm < 1
+                              ? '${track.totalDistanceMeters.toStringAsFixed(0)} m'
+                              : '${track.totalDistanceKm.toStringAsFixed(2)} km',
+                        ),
+                        const SizedBox(width: 8),
+                        _StatCard(
+                          icon: Icons.speed, label: 'Speed',
+                          value: '${track.avgSpeedKmh.toStringAsFixed(1)} km/h',
+                        ),
+                        const SizedBox(width: 8),
+                        _StatCard(
+                          icon: Icons.terrain, label: 'Elev.',
+                          value: '↑${track.elevationGain.toStringAsFixed(0)}m',
+                        ),
+                      ]),
+                      const Spacer(),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: () => _confirmStop(context),
+                          icon: const Icon(Icons.stop, size: 28),
+                          label: Text('Stop ${track.activityType.label}',
+                              style: const TextStyle(fontSize: 18)),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            backgroundColor: Colors.red[700],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
@@ -336,6 +334,15 @@ class _SummarySheet extends StatelessWidget {
             style: TextStyle(color: Colors.grey[400], fontSize: 14),
             textAlign: TextAlign.center,
           ),
+          // Route map
+          if (track.waypoints.length > 1) ...[
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 200,
+              child: ActivityMap(waypoints: track.waypoints),
+            ),
+          ],
+
           const SizedBox(height: 24),
 
           _summaryRow('Duration', durationStr),
@@ -426,6 +433,51 @@ class _SummarySheet extends StatelessWidget {
   }
 }
 
+void _showTrackMap(BuildContext context, HikeTrack track) {
+  Navigator.of(context).push(MaterialPageRoute(
+    builder: (_) => Scaffold(
+      appBar: AppBar(
+        title: Text('${track.activityType.emoji} ${track.name}'),
+        actions: [
+          if (track.gpxPath != null)
+            IconButton(
+              icon: const Icon(Icons.share),
+              onPressed: () async {
+                try { await Share.shareXFiles([XFile(track.gpxPath!)]); } catch (_) {}
+              },
+            ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Expanded(child: ActivityMap(waypoints: track.waypoints)),
+          Container(
+            padding: const EdgeInsets.all(16),
+            color: Theme.of(context).colorScheme.surfaceContainerHigh,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _miniStat('Distance', '${track.totalDistanceKm.toStringAsFixed(2)} km'),
+                _miniStat('Duration', '${track.duration.inHours}h ${track.duration.inMinutes % 60}m'),
+                _miniStat('Elevation', '↑${track.elevationGain.toStringAsFixed(0)}m'),
+                _miniStat('Speed', '${track.avgSpeedKmh.toStringAsFixed(1)} km/h'),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  ));
+}
+
+Widget _miniStat(String label, String value) => Column(
+  mainAxisSize: MainAxisSize.min,
+  children: [
+    Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+    Text(label, style: TextStyle(color: Colors.grey[500], fontSize: 11)),
+  ],
+);
+
 /// Past activities list.
 class _HistorySheet extends StatelessWidget {
   final List<HikeTrack> tracks;
@@ -455,25 +507,41 @@ class _HistorySheet extends StatelessWidget {
         final track = tracks[i - 1];
         final duration = track.duration;
         return Card(
-          child: ListTile(
-            leading: Text(track.activityType.emoji,
-                style: const TextStyle(fontSize: 28)),
-            title: Text(track.name),
-            subtitle: Text(
-              '${track.totalDistanceKm.toStringAsFixed(2)} km • '
-              '${duration.inHours}h ${duration.inMinutes % 60}m • '
-              '${track.waypoints.length} pts',
-            ),
-            trailing: track.gpxPath != null
-                ? IconButton(
-                    icon: const Icon(Icons.share, size: 20),
-                    onPressed: () async {
-                      try {
-                        await Share.shareXFiles([XFile(track.gpxPath!)]);
-                      } catch (_) {}
-                    },
-                  )
-                : null,
+          child: Column(
+            children: [
+              ListTile(
+                leading: Text(track.activityType.emoji,
+                    style: const TextStyle(fontSize: 28)),
+                title: Text(track.name),
+                subtitle: Text(
+                  '${track.totalDistanceKm.toStringAsFixed(2)} km • '
+                  '${duration.inHours}h ${duration.inMinutes % 60}m • '
+                  '${track.waypoints.length} pts',
+                ),
+                trailing: track.gpxPath != null
+                    ? IconButton(
+                        icon: const Icon(Icons.share, size: 20),
+                        onPressed: () async {
+                          try {
+                            await Share.shareXFiles([XFile(track.gpxPath!)]);
+                          } catch (_) {}
+                        },
+                      )
+                    : null,
+                onTap: track.waypoints.length > 1
+                    ? () => _showTrackMap(context, track)
+                    : null,
+              ),
+              // Mini map preview
+              if (track.waypoints.length > 1)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  child: SizedBox(
+                    height: 150,
+                    child: ActivityMap(waypoints: track.waypoints),
+                  ),
+                ),
+            ],
           ),
         );
       },
