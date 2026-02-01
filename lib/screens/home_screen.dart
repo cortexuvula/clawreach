@@ -6,6 +6,7 @@ import '../models/gateway_config.dart';
 import '../models/message.dart' as msg;
 import '../services/chat_service.dart';
 import '../services/gateway_service.dart';
+import '../services/node_connection_service.dart';
 import '../widgets/chat_bubble.dart';
 import 'settings_screen.dart';
 
@@ -21,29 +22,62 @@ class _HomeScreenState extends State<HomeScreen> {
   GatewayConfig? _config;
   final _textController = TextEditingController();
   final _scrollController = ScrollController();
+  final _focusNode = FocusNode();
+  int _prevMessageCount = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadConfig();
+    _loadConfigAndAutoConnect();
+    // Scroll when keyboard appears
+    _focusNode.addListener(_onFocusChange);
   }
 
   @override
   void dispose() {
+    _focusNode.removeListener(_onFocusChange);
+    _focusNode.dispose();
     _textController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadConfig() async {
+  void _onFocusChange() {
+    if (_focusNode.hasFocus) {
+      _scrollToBottom(delay: 300);
+    }
+  }
+
+  void _scrollToBottom({int delay = 100}) {
+    Future.delayed(Duration(milliseconds: delay), () {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  Future<void> _loadConfigAndAutoConnect() async {
     final prefs = await SharedPreferences.getInstance();
     final configStr = prefs.getString('gateway_config');
     if (configStr != null) {
-      setState(() {
-        _config = GatewayConfig.fromJson(
-          jsonDecode(configStr) as Map<String, dynamic>,
-        );
-      });
+      final config = GatewayConfig.fromJson(
+        jsonDecode(configStr) as Map<String, dynamic>,
+      );
+      setState(() => _config = config);
+
+      // Auto-connect both operator (chat) and node (camera) connections
+      final gateway = context.read<GatewayService>();
+      final nodeConn = context.read<NodeConnectionService>();
+      if (!gateway.isConnected) {
+        gateway.connect(config);
+      }
+      if (!nodeConn.isConnected) {
+        nodeConn.connect(config);
+      }
     }
   }
 
@@ -58,17 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final chat = context.read<ChatService>();
     chat.sendMessage(text);
     _textController.clear();
-
-    // Scroll to bottom
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+    _scrollToBottom();
   }
 
   String _routeLabel(String? url) {
@@ -86,7 +110,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return 'Connected';
   }
 
-  Widget _buildAppBarStatus(GatewayService gateway, ChatService chat) {
+  Widget _buildAppBarStatus(GatewayService gateway, ChatService chat, NodeConnectionService nodeConn) {
     final (color, label) = switch (gateway.state) {
       msg.GatewayConnectionState.disconnected => (Colors.grey, 'Offline'),
       msg.GatewayConnectionState.connecting => (Colors.orange, 'Connecting'),
@@ -110,19 +134,20 @@ class _HomeScreenState extends State<HomeScreen> {
             color: color,
             shape: BoxShape.circle,
             boxShadow: color == Colors.green
-                ? [
-                    BoxShadow(
-                        color: color.withValues(alpha: 0.5), blurRadius: 6)
-                  ]
+                ? [BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 6)]
                 : null,
           ),
         ),
         const SizedBox(width: 6),
         Text(
           label,
-          style: TextStyle(
-              color: color, fontSize: 12, fontWeight: FontWeight.w500),
+          style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500),
         ),
+        // Camera indicator
+        if (nodeConn.isConnected) ...[
+          const SizedBox(width: 8),
+          Icon(Icons.camera_alt, size: 14, color: Colors.green.withValues(alpha: 0.8)),
+        ],
       ],
     );
   }
@@ -131,35 +156,28 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final gateway = context.watch<GatewayService>();
     final chat = context.watch<ChatService>();
+    final nodeConn = context.watch<NodeConnectionService>();
+
+    // Auto-scroll when new messages arrive or streaming updates
+    if (chat.messages.length != _prevMessageCount) {
+      _prevMessageCount = chat.messages.length;
+      _scrollToBottom();
+    } else if (chat.isStreaming) {
+      _scrollToBottom(delay: 50);
+    }
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         title: Row(
           children: [
             const Text('🦊 ', style: TextStyle(fontSize: 24)),
             const Text('ClawReach'),
             const SizedBox(width: 12),
-            _buildAppBarStatus(gateway, chat),
+            _buildAppBarStatus(gateway, chat, nodeConn),
           ],
         ),
         actions: [
-          if (_config != null)
-            IconButton(
-              icon: Icon(
-                gateway.isConnected ? Icons.link_off : Icons.link,
-                color: gateway.isConnected ? Colors.green : null,
-              ),
-              onPressed: () {
-                if (gateway.isConnected) {
-                  gateway.disconnect();
-                } else if (gateway.state ==
-                        msg.GatewayConnectionState.disconnected ||
-                    gateway.state == msg.GatewayConnectionState.error) {
-                  gateway.connect(_config!);
-                }
-              },
-              tooltip: gateway.isConnected ? 'Disconnect' : 'Connect',
-            ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () => Navigator.push(
@@ -275,6 +293,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Expanded(
                       child: TextField(
                         controller: _textController,
+                        focusNode: _focusNode,
                         enabled: chat.isReady,
                         decoration: InputDecoration(
                           hintText: chat.isReady
