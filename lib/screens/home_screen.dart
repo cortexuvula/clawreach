@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -40,6 +41,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final ImagePicker _imagePicker = ImagePicker();
   bool _isRecording = false;
   DateTime? _recordingStart;
+  Timer? _recordingTimer;
   bool _hasText = false;
 
   @override
@@ -52,6 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _recordingTimer?.cancel();
     _focusNode.removeListener(_onFocusChange);
     _focusNode.dispose();
     _textController.removeListener(_onTextChanged);
@@ -163,6 +166,13 @@ class _HomeScreenState extends State<HomeScreen> {
       _isRecording = true;
       _recordingStart = DateTime.now();
     });
+
+    // Tick the UI every second to update the timer
+    _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_isRecording) {
+        setState(() {}); // Trigger rebuild to update elapsed time
+      }
+    });
   }
 
   Future<void> _stopAndSendRecording() async {
@@ -170,6 +180,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final duration = _recordingStart != null
         ? DateTime.now().difference(_recordingStart!)
         : Duration.zero;
+
+    _recordingTimer?.cancel();
+    _recordingTimer = null;
 
     setState(() {
       _isRecording = false;
@@ -225,7 +238,7 @@ class _HomeScreenState extends State<HomeScreen> {
           'audio': b64,
           'mimeType': 'audio/mp4',
         }),
-      ).timeout(const Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -419,6 +432,8 @@ class _HomeScreenState extends State<HomeScreen> {
           TextButton.icon(
             onPressed: () async {
               // Cancel recording without sending
+              _recordingTimer?.cancel();
+              _recordingTimer = null;
               await _recorder.stop();
               setState(() {
                 _isRecording = false;
