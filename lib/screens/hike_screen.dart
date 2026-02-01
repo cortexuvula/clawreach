@@ -335,7 +335,7 @@ class _SummarySheet extends StatelessWidget {
             textAlign: TextAlign.center,
           ),
           // Route map
-          if (track.waypoints.length > 1) ...[
+          if (track.waypoints.isNotEmpty) ...[
             const SizedBox(height: 16),
             SizedBox(
               height: 200,
@@ -528,12 +528,12 @@ class _HistorySheet extends StatelessWidget {
                         },
                       )
                     : null,
-                onTap: track.waypoints.length > 1
+                onTap: track.waypoints.isNotEmpty
                     ? () => _showTrackMap(context, track)
                     : null,
               ),
               // Mini map preview
-              if (track.waypoints.length > 1)
+              if (track.waypoints.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                   child: SizedBox(
