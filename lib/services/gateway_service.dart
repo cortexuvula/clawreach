@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
@@ -8,7 +9,7 @@ import '../models/gateway_config.dart';
 import '../models/message.dart' as msg;
 import 'crypto_service.dart';
 
-/// Manages WebSocket connection to OpenClaw gateway.
+/// Manages WebSocket connection to OpenClaw gateway with smart URL fallback.
 class GatewayService extends ChangeNotifier {
   final CryptoService _crypto;
   static const _uuid = Uuid();
@@ -17,6 +18,7 @@ class GatewayService extends ChangeNotifier {
   WebSocketChannel? _channel;
   msg.GatewayConnectionState _state = msg.GatewayConnectionState.disconnected;
   String? _errorMessage;
+  String? _activeUrl; // Which URL we're currently connected to
   final List<msg.GatewayMessage> _messages = [];
   Timer? _reconnectTimer;
   GatewayConfig? _config;
@@ -26,9 +28,11 @@ class GatewayService extends ChangeNotifier {
 
   msg.GatewayConnectionState get state => _state;
   String? get errorMessage => _errorMessage;
+  String? get activeUrl => _activeUrl;
   List<msg.GatewayMessage> get messages => List.unmodifiable(_messages);
 
-  /// Connect to the gateway.
+  /// Connect to the gateway with smart URL fallback.
+  /// Tries local URL first (fast timeout), falls back to Tailscale.
   Future<void> connect(GatewayConfig config) async {
     _config = config;
     _reconnectTimer?.cancel();
@@ -41,17 +45,53 @@ class GatewayService extends ChangeNotifier {
     _setState(msg.GatewayConnectionState.connecting);
     _errorMessage = null;
 
-    try {
-      final wsUrl = config.wsUrl;
-      debugPrint('🔌 Connecting to $wsUrl');
+    // Try local URL first
+    final localWs = config.wsUrl;
+    debugPrint('🔌 Trying local: $localWs');
 
-      _channel = WebSocketChannel.connect(
+    if (await _tryConnect(localWs, config.localTimeoutMs)) {
+      _activeUrl = config.url;
+      debugPrint('✅ Connected via local URL');
+      return;
+    }
+
+    // Fall back to Tailscale if available
+    if (config.hasFallback) {
+      final fallbackWs = config.fallbackWsUrl!;
+      debugPrint('🔌 Local failed, trying fallback: $fallbackWs');
+      _errorMessage = null; // Clear local error
+
+      if (await _tryConnect(fallbackWs, 10000)) {
+        _activeUrl = config.fallbackUrl;
+        debugPrint('✅ Connected via fallback URL');
+        return;
+      }
+    }
+
+    // Both failed
+    debugPrint('❌ All connection attempts failed');
+    _setState(msg.GatewayConnectionState.error);
+    _scheduleReconnect();
+  }
+
+  /// Attempt WebSocket connection to a specific URL with timeout.
+  Future<bool> _tryConnect(String wsUrl, int timeoutMs) async {
+    try {
+      final channel = WebSocketChannel.connect(
         Uri.parse(wsUrl),
         protocols: ['openclaw-node'],
       );
 
-      await _channel!.ready;
-      debugPrint('🔌 WebSocket connected, waiting for challenge...');
+      // Wait for connection with timeout
+      await channel.ready.timeout(
+        Duration(milliseconds: timeoutMs),
+        onTimeout: () {
+          throw TimeoutException('Connection timeout after ${timeoutMs}ms');
+        },
+      );
+
+      debugPrint('🔌 WebSocket connected to $wsUrl, waiting for challenge...');
+      _channel = channel;
       _setState(msg.GatewayConnectionState.authenticating);
 
       _channel!.stream.listen(
@@ -59,11 +99,20 @@ class GatewayService extends ChangeNotifier {
         onDone: _onDone,
         onError: _onError,
       );
+
+      return true;
+    } on TimeoutException catch (e) {
+      debugPrint('⏱️ Timeout connecting to $wsUrl: $e');
+      _errorMessage = 'Local connection timeout';
+      return false;
+    } on SocketException catch (e) {
+      debugPrint('🔌 Socket error connecting to $wsUrl: $e');
+      _errorMessage = 'Cannot reach $wsUrl';
+      return false;
     } catch (e) {
-      debugPrint('❌ Connection failed: $e');
+      debugPrint('❌ Failed connecting to $wsUrl: $e');
       _errorMessage = e.toString();
-      _setState(msg.GatewayConnectionState.error);
-      _scheduleReconnect();
+      return false;
     }
   }
 
@@ -72,6 +121,7 @@ class GatewayService extends ChangeNotifier {
     _reconnectTimer?.cancel();
     await _channel?.sink.close();
     _channel = null;
+    _activeUrl = null;
     _setState(msg.GatewayConnectionState.disconnected);
   }
 
@@ -98,7 +148,6 @@ class GatewayService extends ChangeNotifier {
           return;
         }
       } else if (type == 'res') {
-        // Response to our connect request
         final ok = json['ok'] as bool? ?? false;
         if (ok && _state == msg.GatewayConnectionState.authenticating) {
           _handleConnectOk(json);
@@ -139,19 +188,16 @@ class GatewayService extends ChangeNotifier {
       final token = _config?.token ?? '';
       final nodeName = _config?.nodeName ?? 'ClawReach';
 
-      // Build device auth payload: v2|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce
-      // Must match exactly what the server rebuilds from connect params
+      // Build device auth payload — must match what server rebuilds
       const clientId = 'openclaw-android';
       const clientMode = 'node';
       const role = 'node';
-      const scopesList = <String>[]; // empty for node role
+      const scopesList = <String>[];
       final scopesStr = scopesList.join(',');
       final authPayload =
           'v2|$deviceId|$clientId|$clientMode|$role|$scopesStr|$signedAtMs|$token|$_nonce';
 
-      debugPrint('🔐 Auth payload: ${authPayload.substring(0, 40)}...');
-
-      // Sign the payload string (UTF-8 encoded)
+      debugPrint('🔐 Signing auth payload...');
       final signature = await _crypto.signString(authPayload);
 
       final connectMsg = {
@@ -185,7 +231,7 @@ class GatewayService extends ChangeNotifier {
       };
 
       _channel?.sink.add(jsonEncode(connectMsg));
-      debugPrint('🔐 Sent connect request with device auth');
+      debugPrint('🔐 Sent connect request');
     } catch (e) {
       debugPrint('❌ Auth failed: $e');
       _errorMessage = 'Authentication failed: $e';
@@ -194,7 +240,7 @@ class GatewayService extends ChangeNotifier {
   }
 
   void _handleConnectOk(Map<String, dynamic> json) {
-    debugPrint('✅ Connected to gateway!');
+    debugPrint('✅ Connected to gateway via ${_activeUrl ?? "unknown"}!');
     _setState(msg.GatewayConnectionState.connected);
   }
 
@@ -209,6 +255,7 @@ class GatewayService extends ChangeNotifier {
 
   void _onDone() {
     debugPrint('🔌 WebSocket closed');
+    _activeUrl = null;
     _setState(msg.GatewayConnectionState.disconnected);
     _scheduleReconnect();
   }
@@ -216,6 +263,7 @@ class GatewayService extends ChangeNotifier {
   void _onError(dynamic error) {
     debugPrint('❌ WebSocket error: $error');
     _errorMessage = error.toString();
+    _activeUrl = null;
     _setState(msg.GatewayConnectionState.error);
     _scheduleReconnect();
   }

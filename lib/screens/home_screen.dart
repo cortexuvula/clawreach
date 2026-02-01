@@ -78,6 +78,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ConnectionBadge(
                   state: gateway.state,
                   errorMessage: gateway.errorMessage,
+                  activeUrl: gateway.activeUrl,
                 ),
                 const SizedBox(height: 16),
 
