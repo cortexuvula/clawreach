@@ -4,6 +4,7 @@ import 'services/camera_service.dart';
 import 'services/chat_service.dart';
 import 'services/crypto_service.dart';
 import 'services/gateway_service.dart';
+import 'services/location_service.dart';
 import 'services/node_connection_service.dart';
 import 'services/notification_service.dart';
 import 'screens/home_screen.dart';
@@ -21,13 +22,15 @@ void main() async {
   final chat = ChatService(gateway);
   final camera = CameraService(nodeConnection);
   final notifications = NotificationService(nodeConnection);
+  final location = LocationService(nodeConnection);
 
   // Wire raw gateway messages to chat service
   gateway.onRawMessage = chat.handleGatewayMessage;
 
-  // Initialize cameras and notifications
+  // Initialize services
   await camera.init();
   await notifications.init();
+  await location.init();
 
   runApp(ClawReachApp(
     crypto: crypto,
@@ -36,6 +39,7 @@ void main() async {
     chat: chat,
     camera: camera,
     notifications: notifications,
+    location: location,
   ));
 }
 
@@ -46,6 +50,7 @@ class ClawReachApp extends StatelessWidget {
   final ChatService chat;
   final CameraService camera;
   final NotificationService notifications;
+  final LocationService location;
 
   const ClawReachApp({
     super.key,
@@ -55,6 +60,7 @@ class ClawReachApp extends StatelessWidget {
     required this.chat,
     required this.camera,
     required this.notifications,
+    required this.location,
   });
 
   @override
@@ -67,6 +73,7 @@ class ClawReachApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: chat),
         ChangeNotifierProvider.value(value: camera),
         ChangeNotifierProvider.value(value: notifications),
+        ChangeNotifierProvider.value(value: location),
       ],
       child: MaterialApp(
         title: 'ClawReach',

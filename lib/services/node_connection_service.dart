@@ -178,8 +178,8 @@ class NodeConnectionService extends ChangeNotifier {
           },
           'role': role,
           'scopes': <String>[],
-          'caps': ['camera', 'notifications'],
-          'commands': ['camera.snap', 'camera.list', 'system.notify'],
+          'caps': ['camera', 'notifications', 'location'],
+          'commands': ['camera.snap', 'camera.list', 'system.notify', 'location.get'],
           'auth': {'token': token},
           'device': {
             'id': deviceId,
