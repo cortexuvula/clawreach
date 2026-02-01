@@ -67,14 +67,6 @@ class ChatService extends ChangeNotifier {
     switch (state) {
       case 'delta':
         _activeRunId = runId;
-        // Don't show NO_REPLY / HEARTBEAT_OK while streaming
-        // Check both exact match AND prefix (streaming sends char-by-char)
-        final deltaText = text.trim();
-        if (deltaText == 'NO_REPLY' || deltaText == 'HEARTBEAT_OK' ||
-            'NO_REPLY'.startsWith(deltaText) ||
-            'HEARTBEAT_OK'.startsWith(deltaText)) {
-          break;
-        }
         final idx = _messages.indexWhere((m) => m.id == runId);
         if (idx >= 0) {
           _messages[idx] = _messages[idx].copyWith(
