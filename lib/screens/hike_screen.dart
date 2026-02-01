@@ -41,96 +41,94 @@ class HikeScreen extends StatelessWidget {
   }
 }
 
-/// Activity picker + start button.
-class _IdleView extends StatefulWidget {
+/// Activity grid — tap to start tracking immediately.
+class _IdleView extends StatelessWidget {
   const _IdleView();
-
-  @override
-  State<_IdleView> createState() => _IdleViewState();
-}
-
-class _IdleViewState extends State<_IdleView> {
-  FitnessActivity _selected = FitnessActivity.hike;
 
   @override
   Widget build(BuildContext context) {
     final hike = context.watch<HikeService>();
 
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(_selected.emoji, style: const TextStyle(fontSize: 64)),
-            const SizedBox(height: 16),
-            const Text(
-              'Choose your activity',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 20),
-
-            // Activity type grid
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: FitnessActivity.values.map((type) {
-                final isSelected = type == _selected;
-                return ChoiceChip(
-                  label: Text('${type.emoji} ${type.label}'),
-                  selected: isSelected,
-                  onSelected: (_) => setState(() => _selected = type),
-                  selectedColor: Colors.deepOrange.withValues(alpha: 0.3),
-                  labelStyle: TextStyle(
-                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                  ),
-                );
-              }).toList(),
-            ),
-
-            const SizedBox(height: 12),
-            Text(
-              'GPS tracks every 10 seconds • Works offline',
-              style: TextStyle(color: Colors.grey[500], fontSize: 12),
-              textAlign: TextAlign.center,
-            ),
-
-            if (hike.error != null) ...[
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.warning, color: Colors.orange, size: 18),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        hike.error!,
-                        style: TextStyle(color: Colors.red[300], fontSize: 13),
-                      ),
-                    ),
-                  ],
-                ),
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          if (hike.error != null) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
               ),
-            ],
-
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: () => hike.startTracking(type: _selected),
-              icon: const Icon(Icons.play_arrow, size: 28),
-              label: Text('Start ${_selected.label}',
-                  style: const TextStyle(fontSize: 18)),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                backgroundColor: Colors.green[700],
+              child: Row(
+                children: [
+                  const Icon(Icons.warning, color: Colors.orange, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(hike.error!,
+                        style: TextStyle(color: Colors.red[300], fontSize: 13)),
+                  ),
+                ],
               ),
             ),
           ],
+
+          // Activity grid
+          Expanded(
+            child: GridView.count(
+              crossAxisCount: 2,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 1.4,
+              children: FitnessActivity.values.map((type) {
+                return _ActivityCard(
+                  type: type,
+                  onTap: () => hike.startTracking(type: type),
+                );
+              }).toList(),
+            ),
+          ),
+
+          const SizedBox(height: 8),
+          Text(
+            'GPS tracks every 10 seconds • Works offline',
+            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Tappable activity card that starts tracking.
+class _ActivityCard extends StatelessWidget {
+  final FitnessActivity type;
+  final VoidCallback onTap;
+
+  const _ActivityCard({required this.type, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(type.emoji, style: const TextStyle(fontSize: 36)),
+              const SizedBox(height: 8),
+              Text(type.label, style: const TextStyle(
+                fontSize: 16, fontWeight: FontWeight.w600,
+              )),
+            ],
+          ),
         ),
       ),
     );
