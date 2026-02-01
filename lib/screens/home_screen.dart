@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -181,13 +182,65 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!await file.exists()) return;
 
     final chat = context.read<ChatService>();
-    await chat.sendFile(
-      file: file,
-      type: 'audio',
-      mimeType: 'audio/mp4',
-      duration: duration,
-    );
+
+    // Try to transcribe via the server
+    final transcript = await _transcribeAudio(file);
+
+    if (transcript != null && transcript.isNotEmpty) {
+      // Send as text with a voice note prefix
+      debugPrint('🎤 Transcript: $transcript');
+      chat.sendMessage('🎤 $transcript');
+    } else {
+      // Fallback: send as audio attachment
+      debugPrint('🎤 Transcription failed, sending as audio file');
+      await chat.sendFile(
+        file: file,
+        type: 'audio',
+        mimeType: 'audio/mp4',
+        duration: duration,
+      );
+    }
     _scrollToBottom();
+  }
+
+  /// Transcribe audio file via the local transcription server.
+  Future<String?> _transcribeAudio(File file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final b64 = base64Encode(bytes);
+
+      // Try gateway's local IP first, then fallback
+      final config = _config;
+      final gatewayHost = config != null
+          ? Uri.parse(config.url).host
+          : '192.168.1.171';
+      final url = 'http://$gatewayHost:8014/transcribe';
+
+      debugPrint('🎤 Transcribing via $url (${(bytes.length / 1024).toStringAsFixed(0)} KB)...');
+
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'audio': b64,
+          'mimeType': 'audio/mp4',
+        }),
+      ).timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final text = (data['text'] as String?)?.trim() ?? '';
+        final elapsed = data['elapsed'] ?? 0;
+        debugPrint('🎤 Transcribed in ${elapsed}s: ${text.substring(0, text.length.clamp(0, 60))}');
+        return text;
+      } else {
+        debugPrint('🎤 Transcription server error: ${response.statusCode}');
+        return null;
+      }
+    } catch (e) {
+      debugPrint('🎤 Transcription failed: $e');
+      return null;
+    }
   }
 
   // ── Image picking ──
