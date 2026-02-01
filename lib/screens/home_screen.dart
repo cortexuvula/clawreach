@@ -143,10 +143,10 @@ class _HomeScreenState extends State<HomeScreen> {
           label,
           style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500),
         ),
-        // Camera indicator
+        // Node connection indicator
         if (nodeConn.isConnected) ...[
           const SizedBox(width: 8),
-          Icon(Icons.camera_alt, size: 14, color: Colors.green.withValues(alpha: 0.8)),
+          Icon(Icons.sensors, size: 14, color: Colors.green.withValues(alpha: 0.8)),
         ],
       ],
     );
