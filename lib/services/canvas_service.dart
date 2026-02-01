@@ -52,7 +52,7 @@ class CanvasService extends ChangeNotifier {
     final config = _nodeConnection.activeConfig;
     if (config == null) return '';
     final baseUrl = config.url.replaceFirst(RegExp(r'/+$'), '');
-    return '$baseUrl/__openclaw__/a2ui?platform=android';
+    return '$baseUrl/__openclaw__/a2ui/?platform=android';
   }
 
   Future<Map<String, dynamic>> _handlePresent(
@@ -64,7 +64,13 @@ class CanvasService extends ChangeNotifier {
     debugPrint('🖼️ Canvas present: $_currentUrl');
     notifyListeners();
 
-    // Navigate WebView if available
+    // Wait for the WebView widget to mount and register its controller
+    for (int i = 0; i < 30; i++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (_webViewController != null) break;
+    }
+
+    // Navigate WebView
     if (_webViewController != null && _currentUrl != null) {
       await _webViewController!.loadRequest(Uri.parse(_currentUrl!));
     }
@@ -173,14 +179,47 @@ class CanvasService extends ChangeNotifier {
       _currentUrl = _buildA2uiUrl();
       _visible = true;
       notifyListeners();
-      // Wait a bit for WebView to load
-      await Future.delayed(const Duration(milliseconds: 500));
+
+      // Wait for WebView widget to mount
+      for (int i = 0; i < 30; i++) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        if (_webViewController != null) break;
+      }
+
+      // Load the A2UI page
+      if (_webViewController != null && _currentUrl != null) {
+        await _webViewController!.loadRequest(Uri.parse(_currentUrl!));
+      }
     }
 
     if (_webViewController != null) {
+      // Wait for A2UI host to be ready (up to 8 seconds)
+      bool ready = false;
+      for (int i = 0; i < 80; i++) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        try {
+          final result = await _webViewController!.runJavaScriptReturningResult('''
+            (() => {
+              try {
+                const h = globalThis.openclawA2UI;
+                return h && typeof h.applyMessages === 'function' ? 'ready' : 'not_ready';
+              } catch (_) { return 'error'; }
+            })()
+          ''');
+          final str = result.toString().replaceAll('"', '');
+          if (str == 'ready') {
+            debugPrint('🖼️ A2UI host ready after ${(i+1)*100}ms');
+            ready = true;
+            break;
+          }
+        } catch (_) {}
+      }
+      if (!ready) {
+        debugPrint('⚠️ A2UI host not ready after 8s, pushing anyway');
+      }
       await _pushJsonlToWebView(jsonl);
     } else {
-      _pendingJsonl += jsonl;
+      _pendingJsonl += '$jsonl\n';
     }
 
     return {'ok': true};
@@ -189,27 +228,29 @@ class CanvasService extends ChangeNotifier {
   Future<void> _pushJsonlToWebView(String jsonl) async {
     if (_webViewController == null) return;
 
-    // Escape for JS string
-    final escaped = jsonl
-        .replaceAll('\\', '\\\\')
-        .replaceAll("'", "\\'")
-        .replaceAll('\n', '\\n')
-        .replaceAll('\r', '\\r');
+    // Parse JSONL into array of messages
+    // Each line is a JSON object — combine into a JS array
+    final lines = jsonl.split('\n').where((l) => l.trim().isNotEmpty).toList();
+    final messagesJson = '[${lines.join(',')}]';
 
-    // Push to the A2UI host element
+    // Escape backticks and backslashes for JS template
+    final escaped = messagesJson
+        .replaceAll('\\', '\\\\')
+        .replaceAll('`', '\\`')
+        .replaceAll('\$', '\\\$');
+
+    // Use globalThis.openclawA2UI.applyMessages() — same as upstream Android app
     final js = '''
-      (function() {
-        var host = document.querySelector('openclaw-a2ui-host');
-        if (host && host.pushJSONL) {
-          host.pushJSONL('$escaped');
-          return 'ok';
+      (() => {
+        try {
+          const host = globalThis.openclawA2UI;
+          if (!host) return JSON.stringify({ ok: false, error: "missing openclawA2UI" });
+          const messages = $escaped;
+          const result = host.applyMessages(messages);
+          return JSON.stringify(result);
+        } catch (e) {
+          return JSON.stringify({ ok: false, error: String(e?.message ?? e) });
         }
-        // Try direct window function
-        if (window.__openclaw_a2ui_push) {
-          window.__openclaw_a2ui_push('$escaped');
-          return 'ok';
-        }
-        return 'no_host';
       })()
     ''';
 
@@ -228,8 +269,12 @@ class CanvasService extends ChangeNotifier {
 
     if (_webViewController != null) {
       await _webViewController!.runJavaScript('''
-        var host = document.querySelector('openclaw-a2ui-host');
-        if (host && host.reset) host.reset();
+        (() => {
+          try {
+            const host = globalThis.openclawA2UI;
+            if (host) host.reset();
+          } catch (_) {}
+        })()
       ''');
     }
     return {'ok': true};

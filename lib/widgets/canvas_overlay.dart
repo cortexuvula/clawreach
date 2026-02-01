@@ -12,16 +12,13 @@ class CanvasOverlay extends StatefulWidget {
 }
 
 class _CanvasOverlayState extends State<CanvasOverlay> {
-  WebViewController? _controller;
+  late final WebViewController _controller;
+  String? _loadedUrl;
 
   @override
   void initState() {
     super.initState();
-    _initWebView();
-  }
-
-  void _initWebView() {
-    final controller = WebViewController()
+    _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.black)
       ..setNavigationDelegate(NavigationDelegate(
@@ -33,25 +30,30 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
         },
       ));
 
-    _controller = controller;
-
-    // Register with CanvasService after build
+    // Register with CanvasService
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        context.read<CanvasService>().setWebViewController(controller);
+        final canvas = context.read<CanvasService>();
+        canvas.setWebViewController(_controller);
+        _loadUrl(canvas.currentUrl);
       }
     });
+  }
+
+  void _loadUrl(String? url) {
+    if (url != null && url != _loadedUrl) {
+      _loadedUrl = url;
+      _controller.loadRequest(Uri.parse(url));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final canvas = context.watch<CanvasService>();
 
-    if (!canvas.isVisible) return const SizedBox.shrink();
-
-    // Load URL if available
-    if (canvas.currentUrl != null && _controller != null) {
-      _controller!.loadRequest(Uri.parse(canvas.currentUrl!));
+    // Load new URL if it changed
+    if (canvas.currentUrl != _loadedUrl) {
+      _loadUrl(canvas.currentUrl);
     }
 
     return Material(
@@ -61,8 +63,8 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
           children: [
             // Header bar with close button
             Container(
-              height: 48,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
+              height: 44,
+              padding: const EdgeInsets.symmetric(horizontal: 4),
               decoration: BoxDecoration(
                 color: Colors.grey[900],
                 border: Border(
@@ -72,21 +74,16 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
               child: Row(
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white70),
-                    onPressed: () {
-                      // Hide canvas locally (doesn't send to gateway)
-                      // The gateway can re-show it
-                      canvas.handleLocalHide();
-                    },
+                    icon: const Icon(Icons.close, color: Colors.white70, size: 20),
+                    onPressed: () => canvas.handleLocalHide(),
                     tooltip: 'Close canvas',
                   ),
-                  const SizedBox(width: 8),
-                  const Icon(Icons.web, size: 16, color: Colors.white54),
+                  const Icon(Icons.web, size: 14, color: Colors.white38),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      canvas.currentUrl ?? 'Canvas',
-                      style: const TextStyle(color: Colors.white54, fontSize: 12),
+                      'Canvas',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -95,7 +92,7 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
             ),
             // WebView
             Expanded(
-              child: WebViewWidget(controller: _controller!),
+              child: WebViewWidget(controller: _controller),
             ),
           ],
         ),
