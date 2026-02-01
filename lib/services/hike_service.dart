@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
@@ -16,6 +17,14 @@ class HikeService extends ChangeNotifier {
   /// Wire up the node connection for syncing completed activities to gateway.
   void setNodeConnection(NodeConnectionService nodeConn) {
     _nodeConnection = nodeConn;
+    // Listen for connection changes to flush pending syncs
+    _nodeConnection!.addListener(_onConnectionChanged);
+  }
+
+  void _onConnectionChanged() {
+    if (_nodeConnection?.isConnected == true) {
+      _flushPendingSync();
+    }
   }
 
   HikeTrack? _activeTrack;
@@ -318,15 +327,10 @@ class HikeService extends ChangeNotifier {
     return dir;
   }
 
-  /// Send activity summary to gateway for memory logging.
-  void _syncToGateway(HikeTrack track) {
-    if (_nodeConnection == null || !_nodeConnection!.isConnected) {
-      debugPrint('⚠️ No gateway connection — activity summary not synced');
-      return;
-    }
-
+  /// Build summary payload for a track.
+  Map<String, dynamic> _buildSummary(HikeTrack track) {
     final duration = track.duration;
-    final summary = {
+    return {
       'type': 'fitness_activity_complete',
       'activityType': track.activityType.name,
       'activityLabel': track.activityType.label,
@@ -342,9 +346,64 @@ class HikeService extends ChangeNotifier {
       'waypointCount': track.waypoints.length,
       'hasGpx': track.gpxPath != null,
     };
+  }
 
-    _nodeConnection!.sendNodeEvent('fitness.activity.complete', summary);
-    debugPrint('📤 Activity summary synced to gateway');
+  /// Send activity summary to gateway, or queue for later if offline.
+  void _syncToGateway(HikeTrack track) {
+    final summary = _buildSummary(track);
+
+    if (_nodeConnection != null && _nodeConnection!.isConnected) {
+      _nodeConnection!.sendNodeEvent('fitness.activity.complete', summary);
+      debugPrint('📤 Activity summary synced to gateway');
+    } else {
+      // Queue for later — save to pending sync file
+      _queuePendingSync(summary);
+      debugPrint('📦 Activity summary queued (offline) — will sync on reconnect');
+    }
+  }
+
+  /// Save unsent summary to local queue file.
+  Future<void> _queuePendingSync(Map<String, dynamic> summary) async {
+    try {
+      final dir = await _hikesDir();
+      final file = File('${dir.path}/_pending_sync.jsonl');
+      await file.writeAsString(
+        '${jsonEncode(summary)}\n',
+        mode: FileMode.append,
+      );
+    } catch (e) {
+      debugPrint('❌ Failed to queue sync: $e');
+    }
+  }
+
+  /// Flush all pending syncs when connection is restored.
+  Future<void> _flushPendingSync() async {
+    if (_nodeConnection == null || !_nodeConnection!.isConnected) return;
+
+    try {
+      final dir = await _hikesDir();
+      final file = File('${dir.path}/_pending_sync.jsonl');
+      if (!await file.exists()) return;
+
+      final lines = await file.readAsLines();
+      if (lines.isEmpty) return;
+
+      int sent = 0;
+      for (final line in lines) {
+        if (line.trim().isEmpty) continue;
+        try {
+          final summary = jsonDecode(line) as Map<String, dynamic>;
+          _nodeConnection!.sendNodeEvent('fitness.activity.complete', summary);
+          sent++;
+        } catch (_) {}
+      }
+
+      // Clear the queue
+      await file.delete();
+      debugPrint('📤 Flushed $sent pending activity syncs to gateway');
+    } catch (e) {
+      debugPrint('❌ Failed to flush pending syncs: $e');
+    }
   }
 
   @override
@@ -352,6 +411,7 @@ class HikeService extends ChangeNotifier {
     _positionSub?.cancel();
     _durationTimer?.cancel();
     _fallbackTimer?.cancel();
+    _nodeConnection?.removeListener(_onConnectionChanged);
     super.dispose();
   }
 }
