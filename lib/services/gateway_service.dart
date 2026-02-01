@@ -24,11 +24,15 @@ class GatewayService extends ChangeNotifier {
   GatewayConfig? _config;
   String? _nonce;
 
+  /// Callback for raw messages (used by ChatService).
+  void Function(Map<String, dynamic>)? onRawMessage;
+
   GatewayService(this._crypto);
 
   msg.GatewayConnectionState get state => _state;
   String? get errorMessage => _errorMessage;
   String? get activeUrl => _activeUrl;
+  bool get isConnected => _state == msg.GatewayConnectionState.connected;
   List<msg.GatewayMessage> get messages => List.unmodifiable(_messages);
 
   /// Connect to the gateway with smart URL fallback.
@@ -127,11 +131,21 @@ class GatewayService extends ChangeNotifier {
 
   /// Send a JSON message to the gateway.
   void send(Map<String, dynamic> message) {
-    if (_state != msg.GatewayConnectionState.connected) {
-      debugPrint('⚠️ Cannot send — not connected');
-      return;
-    }
     _channel?.sink.add(jsonEncode(message));
+  }
+
+  /// Send a typed request to the gateway.
+  void sendRequest({
+    required String method,
+    required String id,
+    required Map<String, dynamic> params,
+  }) {
+    send({
+      'type': 'req',
+      'method': method,
+      'id': id,
+      'params': params,
+    });
   }
 
   void _onMessage(dynamic data) {
@@ -149,16 +163,19 @@ class GatewayService extends ChangeNotifier {
         }
       } else if (type == 'res') {
         final ok = json['ok'] as bool? ?? false;
-        if (ok && _state == msg.GatewayConnectionState.authenticating) {
-          _handleConnectOk(json);
-          return;
-        } else if (!ok && _state == msg.GatewayConnectionState.authenticating) {
-          _handleConnectError(json);
+        if (_state == msg.GatewayConnectionState.authenticating) {
+          if (ok) { _handleConnectOk(json); } else { _handleConnectError(json); }
           return;
         }
+        // Forward non-connect responses to chat/listeners
+        onRawMessage?.call(json);
+        return;
       }
 
-      // All other messages
+      // Forward events to listeners (ChatService etc.)
+      onRawMessage?.call(json);
+
+      // Store in raw message feed
       _messages.add(msg.GatewayMessage.fromJson(json));
       notifyListeners();
     } catch (e) {
@@ -190,9 +207,9 @@ class GatewayService extends ChangeNotifier {
 
       // Build device auth payload — must match what server rebuilds
       const clientId = 'openclaw-android';
-      const clientMode = 'node';
-      const role = 'node';
-      const scopesList = <String>[];
+      const clientMode = 'webchat';
+      const role = 'operator';
+      const scopesList = <String>['operator.admin'];
       final scopesStr = scopesList.join(',');
       final authPayload =
           'v2|$deviceId|$clientId|$clientMode|$role|$scopesStr|$signedAtMs|$token|$_nonce';
@@ -239,8 +256,16 @@ class GatewayService extends ChangeNotifier {
     }
   }
 
+  String? _mainSessionKey;
+  String? get mainSessionKey => _mainSessionKey;
+
   void _handleConnectOk(Map<String, dynamic> json) {
-    debugPrint('✅ Connected to gateway via ${_activeUrl ?? "unknown"}!');
+    // Extract session key from hello-ok payload
+    final payload = json['payload'] as Map<String, dynamic>?;
+    final snapshot = payload?['snapshot'] as Map<String, dynamic>?;
+    final sessionDefaults = snapshot?['sessionDefaults'] as Map<String, dynamic>?;
+    _mainSessionKey = sessionDefaults?['mainSessionKey'] as String?;
+    debugPrint('✅ Connected to gateway via ${_activeUrl ?? "unknown"}! session=$_mainSessionKey');
     _setState(msg.GatewayConnectionState.connected);
   }
 
