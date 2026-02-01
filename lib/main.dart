@@ -8,6 +8,7 @@ import 'services/gateway_service.dart';
 import 'services/location_service.dart';
 import 'services/node_connection_service.dart';
 import 'services/notification_service.dart';
+import 'services/cached_tile_provider.dart';
 import 'services/hike_service.dart';
 import 'screens/home_screen.dart';
 
@@ -36,6 +37,7 @@ void main() async {
   await camera.init();
   await notifications.init();
   await location.init();
+  await CachedTileProvider.init();
 
   runApp(ClawReachApp(
     crypto: crypto,

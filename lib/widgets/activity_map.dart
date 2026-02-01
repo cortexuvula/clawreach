@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../models/hike_track.dart';
+import '../services/cached_tile_provider.dart';
 
 /// Map widget showing a GPS activity track.
 class ActivityMap extends StatefulWidget {
@@ -91,10 +92,11 @@ class _ActivityMapState extends State<ActivityMap> {
           },
         ),
         children: [
-          // OpenStreetMap tiles
+          // OpenStreetMap tiles with offline caching
           TileLayer(
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             userAgentPackageName: 'com.clawreach.clawreach',
+            tileProvider: CachedTileProvider(),
           ),
 
           // Track polyline
