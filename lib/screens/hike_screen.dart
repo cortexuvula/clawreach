@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../models/hike_track.dart';
 import '../services/hike_service.dart';
-import 'package:share_plus/share_plus.dart';
 
-/// Hike tracking screen with GPS logging and live stats.
+/// Fitness activity tracking screen with GPS logging and live stats.
 class HikeScreen extends StatelessWidget {
   const HikeScreen({super.key});
 
@@ -14,26 +14,26 @@ class HikeScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('🥾 Hike Tracker'),
+        title: Text(hike.isTracking
+            ? '${hike.activeTrack?.activityType.emoji ?? "📍"} Tracking'
+            : '🏋️ Fitness Tracker'),
         actions: [
           if (!hike.isTracking)
             IconButton(
               icon: const Icon(Icons.history),
-              tooltip: 'Past hikes',
+              tooltip: 'Past activities',
               onPressed: () => _showHistory(context),
             ),
         ],
       ),
-      body: hike.isTracking ? _TrackingView() : _IdleView(),
+      body: hike.isTracking ? const _TrackingView() : const _IdleView(),
     );
   }
 
   void _showHistory(BuildContext context) async {
     final hike = context.read<HikeService>();
     final tracks = await hike.listTracks();
-
     if (!context.mounted) return;
-
     showModalBottomSheet(
       context: context,
       builder: (ctx) => _HistorySheet(tracks: tracks),
@@ -41,8 +41,17 @@ class HikeScreen extends StatelessWidget {
   }
 }
 
-/// View shown when not tracking — start button.
-class _IdleView extends StatelessWidget {
+/// Activity picker + start button.
+class _IdleView extends StatefulWidget {
+  const _IdleView();
+
+  @override
+  State<_IdleView> createState() => _IdleViewState();
+}
+
+class _IdleViewState extends State<_IdleView> {
+  FitnessActivity _selected = FitnessActivity.hike;
+
   @override
   Widget build(BuildContext context) {
     final hike = context.watch<HikeService>();
@@ -53,18 +62,40 @@ class _IdleView extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('🏔️', style: TextStyle(fontSize: 72)),
+            Text(_selected.emoji, style: const TextStyle(fontSize: 64)),
             const SizedBox(height: 16),
             const Text(
-              'Ready to hit the trail?',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+              'Choose your activity',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 20),
+
+            // Activity type grid
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: FitnessActivity.values.map((type) {
+                final isSelected = type == _selected;
+                return ChoiceChip(
+                  label: Text('${type.emoji} ${type.label}'),
+                  selected: isSelected,
+                  onSelected: (_) => setState(() => _selected = type),
+                  selectedColor: Colors.deepOrange.withValues(alpha: 0.3),
+                  labelStyle: TextStyle(
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  ),
+                );
+              }).toList(),
+            ),
+
+            const SizedBox(height: 12),
             Text(
-              'GPS tracks every 10 seconds.\nWorks offline — no data needed.',
-              style: TextStyle(color: Colors.grey[400], fontSize: 14),
+              'GPS tracks every 10 seconds • Works offline',
+              style: TextStyle(color: Colors.grey[500], fontSize: 12),
               textAlign: TextAlign.center,
             ),
+
             if (hike.error != null) ...[
               const SizedBox(height: 16),
               Container(
@@ -87,11 +118,13 @@ class _IdleView extends StatelessWidget {
                 ),
               ),
             ],
-            const SizedBox(height: 32),
+
+            const SizedBox(height: 24),
             FilledButton.icon(
-              onPressed: () => hike.startTracking(),
+              onPressed: () => hike.startTracking(type: _selected),
               icon: const Icon(Icons.play_arrow, size: 28),
-              label: const Text('Start Hike', style: TextStyle(fontSize: 18)),
+              label: Text('Start ${_selected.label}',
+                  style: const TextStyle(fontSize: 18)),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                 backgroundColor: Colors.green[700],
@@ -104,8 +137,10 @@ class _IdleView extends StatelessWidget {
   }
 }
 
-/// View shown during active tracking — live stats.
+/// Live tracking view with stats.
 class _TrackingView extends StatelessWidget {
+  const _TrackingView();
+
   @override
   Widget build(BuildContext context) {
     final hike = context.watch<HikeService>();
@@ -113,7 +148,8 @@ class _TrackingView extends StatelessWidget {
     if (track == null) return const SizedBox();
 
     final duration = track.duration;
-    final durationStr = '${duration.inHours}:${(duration.inMinutes % 60).toString().padLeft(2, '0')}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}';
+    final durationStr =
+        '${duration.inHours}:${(duration.inMinutes % 60).toString().padLeft(2, '0')}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}';
 
     return Column(
       children: [
@@ -132,14 +168,20 @@ class _TrackingView extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: Colors.green,
                       shape: BoxShape.circle,
-                      boxShadow: [BoxShadow(color: Colors.green.withValues(alpha: 0.5), blurRadius: 8)],
+                      boxShadow: [BoxShadow(
+                        color: Colors.green.withValues(alpha: 0.5),
+                        blurRadius: 8,
+                      )],
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Text('TRACKING', style: TextStyle(
-                    color: Colors.green[400], fontSize: 12,
-                    fontWeight: FontWeight.bold, letterSpacing: 2,
-                  )),
+                  Text(
+                    '${track.activityType.emoji} ${track.activityType.label.toUpperCase()}',
+                    style: TextStyle(
+                      color: Colors.green[400], fontSize: 12,
+                      fontWeight: FontWeight.bold, letterSpacing: 2,
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
@@ -160,72 +202,53 @@ class _TrackingView extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                // Distance + Speed row
-                Row(
-                  children: [
-                    _StatCard(
-                      icon: Icons.straighten,
-                      label: 'Distance',
-                      value: track.totalDistanceKm < 1
-                          ? '${track.totalDistanceMeters.toStringAsFixed(0)} m'
-                          : '${track.totalDistanceKm.toStringAsFixed(2)} km',
-                    ),
-                    const SizedBox(width: 12),
-                    _StatCard(
-                      icon: Icons.speed,
-                      label: 'Avg Speed',
-                      value: '${track.avgSpeedKmh.toStringAsFixed(1)} km/h',
-                    ),
-                  ],
-                ),
+                Row(children: [
+                  _StatCard(
+                    icon: Icons.straighten, label: 'Distance',
+                    value: track.totalDistanceKm < 1
+                        ? '${track.totalDistanceMeters.toStringAsFixed(0)} m'
+                        : '${track.totalDistanceKm.toStringAsFixed(2)} km',
+                  ),
+                  const SizedBox(width: 12),
+                  _StatCard(
+                    icon: Icons.speed, label: 'Avg Speed',
+                    value: '${track.avgSpeedKmh.toStringAsFixed(1)} km/h',
+                  ),
+                ]),
                 const SizedBox(height: 12),
-
-                // Elevation row
-                Row(
-                  children: [
-                    _StatCard(
-                      icon: Icons.terrain,
-                      label: 'Altitude',
-                      value: '${track.currentAltitude.toStringAsFixed(0)} m',
-                    ),
-                    const SizedBox(width: 12),
-                    _StatCard(
-                      icon: Icons.trending_up,
-                      label: 'Elev. Gain',
-                      value: '${track.elevationGain.toStringAsFixed(0)} m',
-                    ),
-                  ],
-                ),
+                Row(children: [
+                  _StatCard(
+                    icon: Icons.terrain, label: 'Altitude',
+                    value: '${track.currentAltitude.toStringAsFixed(0)} m',
+                  ),
+                  const SizedBox(width: 12),
+                  _StatCard(
+                    icon: Icons.trending_up, label: 'Elev. Gain',
+                    value: '${track.elevationGain.toStringAsFixed(0)} m',
+                  ),
+                ]),
                 const SizedBox(height: 12),
-
-                // Points + Accuracy row
-                Row(
-                  children: [
-                    _StatCard(
-                      icon: Icons.location_on,
-                      label: 'Waypoints',
-                      value: '${track.waypoints.length}',
-                    ),
-                    const SizedBox(width: 12),
-                    _StatCard(
-                      icon: Icons.gps_fixed,
-                      label: 'GPS Accuracy',
-                      value: hike.lastPosition != null
-                          ? '${hike.lastPosition!.accuracy.toStringAsFixed(0)} m'
-                          : '—',
-                    ),
-                  ],
-                ),
-
+                Row(children: [
+                  _StatCard(
+                    icon: Icons.location_on, label: 'Waypoints',
+                    value: '${track.waypoints.length}',
+                  ),
+                  const SizedBox(width: 12),
+                  _StatCard(
+                    icon: Icons.gps_fixed, label: 'GPS Accuracy',
+                    value: hike.lastPosition != null
+                        ? '${hike.lastPosition!.accuracy.toStringAsFixed(0)} m'
+                        : '—',
+                  ),
+                ]),
                 const Spacer(),
-
-                // Stop button
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
                     onPressed: () => _confirmStop(context),
                     icon: const Icon(Icons.stop, size: 28),
-                    label: const Text('Stop Hike', style: TextStyle(fontSize: 18)),
+                    label: Text('Stop ${track.activityType.label}',
+                        style: const TextStyle(fontSize: 18)),
                     style: FilledButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       backgroundColor: Colors.red[700],
@@ -242,11 +265,12 @@ class _TrackingView extends StatelessWidget {
   }
 
   void _confirmStop(BuildContext context) {
+    final track = context.read<HikeService>().activeTrack;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Stop Hike?'),
-        content: const Text('GPS tracking will stop. You can export the GPX file after.'),
+        title: Text('Stop ${track?.activityType.label ?? "Activity"}?'),
+        content: const Text('GPS tracking will stop and your GPX file will be saved.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -269,7 +293,6 @@ class _TrackingView extends StatelessWidget {
     final hike = context.read<HikeService>();
     final track = await hike.stopTracking();
     if (track == null || !context.mounted) return;
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -278,7 +301,7 @@ class _TrackingView extends StatelessWidget {
   }
 }
 
-/// Post-hike summary sheet.
+/// Post-activity summary with auto-exported GPX.
 class _SummarySheet extends StatelessWidget {
   final HikeTrack track;
   const _SummarySheet({required this.track});
@@ -289,7 +312,7 @@ class _SummarySheet extends StatelessWidget {
     final durationStr = '${duration.inHours}h ${duration.inMinutes % 60}m';
 
     return DraggableScrollableSheet(
-      initialChildSize: 0.65,
+      initialChildSize: 0.7,
       minChildSize: 0.4,
       maxChildSize: 0.85,
       expand: false,
@@ -305,8 +328,9 @@ class _SummarySheet extends StatelessWidget {
             ),
           )),
           const SizedBox(height: 20),
-          const Text('🏁 Hike Complete!',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          Text(
+            '${track.activityType.emoji} ${track.activityType.label} Complete!',
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 4),
@@ -319,17 +343,55 @@ class _SummarySheet extends StatelessWidget {
           _summaryRow('Duration', durationStr),
           _summaryRow('Distance', '${track.totalDistanceKm.toStringAsFixed(2)} km'),
           _summaryRow('Avg Speed', '${track.avgSpeedKmh.toStringAsFixed(1)} km/h'),
-          _summaryRow('Elevation Gain', '${track.elevationGain.toStringAsFixed(0)} m'),
-          _summaryRow('Elevation Loss', '${track.elevationLoss.toStringAsFixed(0)} m'),
+          _summaryRow('Elevation Gain', '↑ ${track.elevationGain.toStringAsFixed(0)} m'),
+          _summaryRow('Elevation Loss', '↓ ${track.elevationLoss.toStringAsFixed(0)} m'),
           _summaryRow('Max Altitude', '${track.maxAltitude.toStringAsFixed(0)} m'),
           _summaryRow('Waypoints', '${track.waypoints.length}'),
 
           const SizedBox(height: 24),
-          FilledButton.icon(
-            onPressed: () => _exportGpx(context),
-            icon: const Icon(Icons.file_download),
-            label: const Text('Export GPX'),
-          ),
+
+          // GPX file status
+          if (track.gpxPath != null) ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.green, size: 18),
+                  const SizedBox(width: 8),
+                  const Expanded(child: Text('GPX file saved',
+                      style: TextStyle(color: Colors.green))),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: () => _shareGpx(context),
+              icon: const Icon(Icons.share),
+              label: const Text('Share GPX File'),
+            ),
+          ] else ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.orange, size: 18),
+                  SizedBox(width: 8),
+                  Expanded(child: Text('No GPX — no waypoints recorded',
+                      style: TextStyle(color: Colors.orange))),
+                ],
+              ),
+            ),
+          ],
+
           const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: () => Navigator.pop(context),
@@ -352,24 +414,21 @@ class _SummarySheet extends StatelessWidget {
     ),
   );
 
-  void _exportGpx(BuildContext context) async {
-    final hike = context.read<HikeService>();
-    final path = await hike.exportGpx(track);
-    if (path != null && context.mounted) {
-      // Try sharing the file
-      try {
-        await Share.shareXFiles([XFile(path)]);
-      } catch (_) {
-        // Fallback: just show path
+  void _shareGpx(BuildContext context) async {
+    if (track.gpxPath == null) return;
+    try {
+      await Share.shareXFiles([XFile(track.gpxPath!)]);
+    } catch (e) {
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('GPX saved: $path')),
+          SnackBar(content: Text('Share failed: $e')),
         );
       }
     }
   }
 }
 
-/// Past hikes list.
+/// Past activities list.
 class _HistorySheet extends StatelessWidget {
   final List<HikeTrack> tracks;
   const _HistorySheet({required this.tracks});
@@ -379,49 +438,44 @@ class _HistorySheet extends StatelessWidget {
     if (tracks.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(48),
-        child: Center(child: Text('No hikes yet', style: TextStyle(color: Colors.grey))),
+        child: Center(child: Text('No activities yet',
+            style: TextStyle(color: Colors.grey))),
       );
     }
 
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: tracks.length + 1, // +1 for header
+      itemCount: tracks.length + 1,
       itemBuilder: (ctx, i) {
         if (i == 0) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Text('Past Hikes',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
+          return const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: Text('Past Activities',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           );
         }
         final track = tracks[i - 1];
         final duration = track.duration;
         return Card(
           child: ListTile(
-            leading: const Text('🥾', style: TextStyle(fontSize: 28)),
+            leading: Text(track.activityType.emoji,
+                style: const TextStyle(fontSize: 28)),
             title: Text(track.name),
             subtitle: Text(
               '${track.totalDistanceKm.toStringAsFixed(2)} km • '
               '${duration.inHours}h ${duration.inMinutes % 60}m • '
               '${track.waypoints.length} pts',
             ),
-            trailing: IconButton(
-              icon: const Icon(Icons.file_download, size: 20),
-              onPressed: () async {
-                final hike = context.read<HikeService>();
-                final path = await hike.exportGpx(track);
-                if (path != null && context.mounted) {
-                  try {
-                    await Share.shareXFiles([XFile(path)]);
-                  } catch (_) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('GPX saved: $path')),
-                    );
-                  }
-                }
-              },
-            ),
+            trailing: track.gpxPath != null
+                ? IconButton(
+                    icon: const Icon(Icons.share, size: 20),
+                    onPressed: () async {
+                      try {
+                        await Share.shareXFiles([XFile(track.gpxPath!)]);
+                      } catch (_) {}
+                    },
+                  )
+                : null,
           ),
         );
       },
@@ -453,15 +507,14 @@ class _StatCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(icon, size: 14, color: Colors.grey[500]),
-                const SizedBox(width: 6),
-                Text(label, style: TextStyle(color: Colors.grey[500], fontSize: 12)),
-              ],
-            ),
+            Row(children: [
+              Icon(icon, size: 14, color: Colors.grey[500]),
+              const SizedBox(width: 6),
+              Text(label, style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+            ]),
             const SizedBox(height: 6),
-            Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+            Text(value,
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
           ],
         ),
       ),

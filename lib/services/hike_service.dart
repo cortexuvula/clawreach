@@ -24,8 +24,8 @@ class HikeService extends ChangeNotifier {
   String? get error => _error;
   Position? get lastPosition => _lastPosition;
 
-  /// Start tracking a new hike.
-  Future<bool> startTracking({String? name}) async {
+  /// Start tracking an activity.
+  Future<bool> startTracking({String? name, FitnessActivity type = FitnessActivity.hike}) async {
     _error = null;
 
     // Check permissions
@@ -34,10 +34,11 @@ class HikeService extends ChangeNotifier {
 
     // Create track
     final now = DateTime.now();
-    final trackName = name ?? 'Hike ${now.month}/${now.day} ${now.hour}:${now.minute.toString().padLeft(2, '0')}';
+    final trackName = name ?? '${type.label} ${now.month}/${now.day} ${now.hour}:${now.minute.toString().padLeft(2, '0')}';
     _activeTrack = HikeTrack(
       id: _uuid.v4(),
       name: trackName,
+      activityType: type,
       startTime: now,
     );
 
@@ -102,7 +103,7 @@ class HikeService extends ChangeNotifier {
     return true;
   }
 
-  /// Stop tracking and save final track.
+  /// Stop tracking, save, and auto-export GPX.
   Future<HikeTrack?> stopTracking() async {
     if (_activeTrack == null) return null;
 
@@ -116,10 +117,16 @@ class HikeService extends ChangeNotifier {
     _fallbackTimer?.cancel();
     _fallbackTimer = null;
 
+    // Auto-export GPX
+    if (_activeTrack!.waypoints.isNotEmpty) {
+      final gpxPath = await exportGpx(_activeTrack!);
+      _activeTrack!.gpxPath = gpxPath;
+    }
+
     await _saveTrack();
     final track = _activeTrack!;
-    debugPrint('🥾 Hike stopped: ${track.waypoints.length} waypoints, '
-        '${track.totalDistanceKm.toStringAsFixed(2)} km');
+    debugPrint('${track.activityType.emoji} Activity stopped: ${track.waypoints.length} waypoints, '
+        '${track.totalDistanceKm.toStringAsFixed(2)} km, GPX: ${track.gpxPath}');
 
     notifyListeners();
     return track;

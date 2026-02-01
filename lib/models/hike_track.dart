@@ -1,7 +1,23 @@
 import 'dart:convert';
 import 'dart:math';
 
-/// A single GPS waypoint during a hike.
+/// Supported activity types.
+enum FitnessActivity {
+  hike('Hike', '🥾'),
+  run('Run', '🏃'),
+  walk('Walk', '🚶'),
+  bike('Bike', '🚴'),
+  ski('Ski', '⛷️'),
+  swim('Swim', '🏊'),
+  kayak('Kayak', '🛶'),
+  other('Activity', '📍');
+
+  final String label;
+  final String emoji;
+  const FitnessActivity(this.label, this.emoji);
+}
+
+/// A single GPS waypoint during an activity.
 class HikeWaypoint {
   final double latitude;
   final double longitude;
@@ -42,19 +58,23 @@ class HikeWaypoint {
   );
 }
 
-/// A complete hike track with waypoints and metadata.
+/// A complete activity track with waypoints and metadata.
 class HikeTrack {
   final String id;
   final String name;
+  final FitnessActivity activityType;
   final DateTime startTime;
   DateTime? endTime;
   final List<HikeWaypoint> waypoints;
+  String? gpxPath; // Path to exported GPX file
 
   HikeTrack({
     required this.id,
     required this.name,
+    this.activityType = FitnessActivity.hike,
     required this.startTime,
     this.endTime,
+    this.gpxPath,
     List<HikeWaypoint>? waypoints,
   }) : waypoints = waypoints ?? [];
 
@@ -175,8 +195,10 @@ class HikeTrack {
   String toJsonString() => jsonEncode({
     'id': id,
     'name': name,
+    'activityType': activityType.name,
     'startTime': startTime.toIso8601String(),
     'endTime': endTime?.toIso8601String(),
+    'gpxPath': gpxPath,
     'waypoints': waypoints.map((w) => w.toJson()).toList(),
   });
 
@@ -186,10 +208,15 @@ class HikeTrack {
     return HikeTrack(
       id: data['id'] as String,
       name: data['name'] as String,
+      activityType: FitnessActivity.values.firstWhere(
+        (t) => t.name == (data['activityType'] as String? ?? 'hike'),
+        orElse: () => FitnessActivity.hike,
+      ),
       startTime: DateTime.parse(data['startTime'] as String),
       endTime: data['endTime'] != null
           ? DateTime.parse(data['endTime'] as String)
           : null,
+      gpxPath: data['gpxPath'] as String?,
       waypoints: (data['waypoints'] as List)
           .map((w) => HikeWaypoint.fromJson(w as Map<String, dynamic>))
           .toList(),

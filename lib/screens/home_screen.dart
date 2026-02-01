@@ -195,14 +195,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
-          // Hike tracker button
+          // Fitness tracker button
           Builder(builder: (ctx) {
             final hikeService = ctx.watch<HikeService>();
             return IconButton(
               icon: hikeService.isTracking
-                  ? const Icon(Icons.hiking, color: Colors.green)
-                  : const Icon(Icons.hiking),
-              tooltip: 'Hike Tracker',
+                  ? const Icon(Icons.directions_run, color: Colors.green)
+                  : const Icon(Icons.directions_run),
+              tooltip: 'Fitness Tracker',
               onPressed: () => Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const HikeScreen()),
