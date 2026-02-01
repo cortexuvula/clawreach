@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:uuid/uuid.dart';
 import '../models/hike_track.dart';
 
@@ -142,7 +143,14 @@ class HikeService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Whether background location has been granted.
+  bool _backgroundGranted = false;
+
+  /// Check if background permission is still needed (for UI prompts).
+  bool get needsBackgroundPermission => !_backgroundGranted;
+
   Future<bool> _ensurePermission() async {
+    // Step 1: Check GPS is on
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       _error = 'Location services are disabled. Please enable GPS.';
@@ -150,6 +158,7 @@ class HikeService extends ChangeNotifier {
       return false;
     }
 
+    // Step 2: Get foreground location permission
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
@@ -164,6 +173,25 @@ class HikeService extends ChangeNotifier {
       _error = 'Location permission permanently denied. Enable in Settings.';
       notifyListeners();
       return false;
+    }
+
+    // Step 3: Request background location (required for tracking with screen off)
+    final bgStatus = await ph.Permission.locationAlways.status;
+    if (!bgStatus.isGranted) {
+      // Request it — Android will show "Allow all the time" prompt
+      final result = await ph.Permission.locationAlways.request();
+      if (result.isGranted) {
+        _backgroundGranted = true;
+      } else {
+        // Still allow tracking but warn — it may stop when screen is off
+        _error = 'Background location not granted. Tracking may stop when screen is off. '
+            'Go to Settings → Apps → Claw Reach → Permissions → Location → Allow all the time';
+        _backgroundGranted = false;
+        notifyListeners();
+        // Don't return false — let them track anyway, just degraded
+      }
+    } else {
+      _backgroundGranted = true;
     }
 
     return true;
