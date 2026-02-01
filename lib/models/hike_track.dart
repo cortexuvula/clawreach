@@ -10,7 +10,7 @@ enum FitnessActivity {
   ski('Ski', '⛷️'),
   swim('Swim', '🏊'),
   kayak('Kayak', '🛶'),
-  other('Activity', '📍');
+  other('Other', '📍');
 
   final String label;
   final String emoji;
