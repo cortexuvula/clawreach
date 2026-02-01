@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/gateway_config.dart';
 import '../models/message.dart' as msg;
 import '../services/gateway_service.dart';
-import '../widgets/connection_badge.dart';
 import 'settings_screen.dart';
 
 /// Main home screen showing connection status and messages.
@@ -41,19 +40,90 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _config = config);
   }
 
+  /// Connection indicator dot + route label for the app bar.
+  Widget _buildAppBarStatus(GatewayService gateway) {
+    final (color, label) = switch (gateway.state) {
+      msg.GatewayConnectionState.disconnected => (Colors.grey, 'Offline'),
+      msg.GatewayConnectionState.connecting => (Colors.orange, 'Connecting'),
+      msg.GatewayConnectionState.authenticating => (Colors.amber, 'Auth...'),
+      msg.GatewayConnectionState.connected => (Colors.green, _routeLabel(gateway.activeUrl)),
+      msg.GatewayConnectionState.error => (Colors.red, 'Error'),
+    };
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            boxShadow: gateway.state == msg.GatewayConnectionState.connected
+                ? [BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 6)]
+                : null,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500),
+        ),
+      ],
+    );
+  }
+
+  String _routeLabel(String? url) {
+    if (url == null || url.isEmpty) return 'Connected';
+    final uri = Uri.tryParse(url);
+    if (uri == null) return 'Connected';
+    final host = uri.host;
+    if (host.startsWith('192.168.') || host.startsWith('10.') || host.startsWith('172.')) {
+      return 'Local';
+    } else if (host.contains('.ts.net') || host.startsWith('100.')) {
+      return 'Tailscale';
+    }
+    return 'Connected';
+  }
+
   @override
   Widget build(BuildContext context) {
     final gateway = context.watch<GatewayService>();
 
     return Scaffold(
       appBar: AppBar(
-        title: const Row(
+        title: Row(
           children: [
-            Text('🦊 ', style: TextStyle(fontSize: 24)),
-            Text('ClawReach'),
+            const Text('🦊 ', style: TextStyle(fontSize: 24)),
+            const Text('ClawReach'),
+            const SizedBox(width: 12),
+            _buildAppBarStatus(gateway),
           ],
         ),
         actions: [
+          // Connect/disconnect toggle in app bar
+          if (_config != null)
+            IconButton(
+              icon: Icon(
+                gateway.state == msg.GatewayConnectionState.connected
+                    ? Icons.link_off
+                    : Icons.link,
+                color: gateway.state == msg.GatewayConnectionState.connected
+                    ? Colors.green
+                    : null,
+              ),
+              onPressed: () {
+                if (gateway.state == msg.GatewayConnectionState.connected) {
+                  gateway.disconnect();
+                } else if (gateway.state == msg.GatewayConnectionState.disconnected ||
+                    gateway.state == msg.GatewayConnectionState.error) {
+                  gateway.connect(_config!);
+                }
+              },
+              tooltip: gateway.state == msg.GatewayConnectionState.connected
+                  ? 'Disconnect'
+                  : 'Connect',
+            ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () => Navigator.push(
@@ -70,54 +140,51 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
-          // Connection status
-          Container(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                ConnectionBadge(
-                  state: gateway.state,
-                  errorMessage: gateway.errorMessage,
-                  activeUrl: gateway.activeUrl,
-                ),
-                const SizedBox(height: 16),
-
-                // Connect/Disconnect button
-                if (_config != null) ...[
-                  if (gateway.state == msg.GatewayConnectionState.disconnected ||
-                      gateway.state == msg.GatewayConnectionState.error)
-                    FilledButton.icon(
-                      onPressed: () => gateway.connect(_config!),
-                      icon: const Icon(Icons.power),
-                      label: const Text('Connect'),
-                    )
-                  else if (gateway.state == msg.GatewayConnectionState.connected)
-                    OutlinedButton.icon(
-                      onPressed: () => gateway.disconnect(),
-                      icon: const Icon(Icons.power_off),
-                      label: const Text('Disconnect'),
-                    )
-                  else
-                    const CircularProgressIndicator(),
-                ] else
-                  FilledButton.icon(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => SettingsScreen(
-                          currentConfig: _config,
-                          onSave: _onConfigSaved,
-                        ),
-                      ),
+          // Show error bar if there's an error
+          if (gateway.state == msg.GatewayConnectionState.error &&
+              gateway.errorMessage != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Colors.red.withValues(alpha: 0.15),
+              child: Row(
+                children: [
+                  Icon(Icons.error_outline, color: Colors.red[300], size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      gateway.errorMessage!,
+                      style: TextStyle(color: Colors.red[300], fontSize: 12),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    icon: const Icon(Icons.settings),
-                    label: const Text('Configure Gateway'),
                   ),
-              ],
+                  TextButton(
+                    onPressed: _config != null ? () => gateway.connect(_config!) : null,
+                    child: const Text('Retry', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
             ),
-          ),
 
-          const Divider(),
+          // Configure prompt if no config
+          if (_config == null)
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: FilledButton.icon(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => SettingsScreen(
+                      currentConfig: _config,
+                      onSave: _onConfigSaved,
+                    ),
+                  ),
+                ),
+                icon: const Icon(Icons.settings),
+                label: const Text('Configure Gateway'),
+              ),
+            ),
 
           // Messages / Events
           Expanded(
@@ -140,8 +207,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     padding: const EdgeInsets.all(8),
                     itemCount: gateway.messages.length,
                     itemBuilder: (context, index) {
-                      final message = gateway.messages[
-                          gateway.messages.length - 1 - index];
+                      final message =
+                          gateway.messages[gateway.messages.length - 1 - index];
                       return Card(
                         child: ListTile(
                           leading: const Icon(Icons.message),
