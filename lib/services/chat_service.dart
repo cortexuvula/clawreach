@@ -22,6 +22,17 @@ class ChatService extends ChangeNotifier {
   bool get isStreaming => _activeRunId != null;
   String? get sessionKey => _gateway.mainSessionKey;
 
+  /// Wait until connected and session is ready, with timeout.
+  Future<bool> waitForReady({Duration timeout = const Duration(seconds: 15)}) async {
+    if (isReady) return true;
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (isReady) return true;
+    }
+    return false;
+  }
+
   void _onGatewayChanged() {
     notifyListeners();
   }
@@ -56,6 +67,10 @@ class ChatService extends ChangeNotifier {
     switch (state) {
       case 'delta':
         _activeRunId = runId;
+        // Don't show NO_REPLY / HEARTBEAT_OK while streaming
+        if (text.trim() == 'NO_REPLY' || text.trim() == 'HEARTBEAT_OK') {
+          break;
+        }
         final idx = _messages.indexWhere((m) => m.id == runId);
         if (idx >= 0) {
           _messages[idx] = _messages[idx].copyWith(
@@ -76,6 +91,14 @@ class ChatService extends ChangeNotifier {
 
       case 'final':
         _activeRunId = null;
+        // Suppress NO_REPLY / HEARTBEAT_OK — these aren't real responses
+        final trimmed = text.trim();
+        if (trimmed == 'NO_REPLY' || trimmed == 'HEARTBEAT_OK') {
+          // Remove any streaming placeholder for this runId
+          _messages.removeWhere((m) => m.id == runId);
+          notifyListeners();
+          break;
+        }
         final idx = _messages.indexWhere((m) => m.id == runId);
         if (idx >= 0) {
           _messages[idx] = _messages[idx].copyWith(
@@ -120,7 +143,10 @@ class ChatService extends ChangeNotifier {
     List<ChatAttachment> localAttachments = const [],
     List<Map<String, dynamic>> gatewayAttachments = const [],
   }) {
-    if (!isReady) return;
+    if (!isReady) {
+      debugPrint('⚠️ Cannot send: not ready (connected=${_gateway.isConnected}, session=$sessionKey)');
+      return;
+    }
     if (text.trim().isEmpty && gatewayAttachments.isEmpty) return;
 
     final idempotencyKey = _uuid.v4();

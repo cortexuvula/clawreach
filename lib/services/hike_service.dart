@@ -353,13 +353,35 @@ class HikeService extends ChangeNotifier {
     final summary = _buildSummary(track);
 
     if (_nodeConnection != null && _nodeConnection!.isConnected) {
-      _nodeConnection!.sendNodeEvent('fitness.activity.complete', summary);
-      debugPrint('📤 Activity summary synced to gateway');
+      // Use agent.request event — gateway processes this and routes to agent
+      final message = _formatSummaryMessage(summary);
+      _nodeConnection!.sendNodeEvent('agent.request', {
+        'message': message,
+        'sessionKey': '', // empty = main session
+        'deliver': false,
+      });
+      debugPrint('📤 Activity summary synced to gateway via agent.request');
     } else {
       // Queue for later — save to pending sync file
       _queuePendingSync(summary);
       debugPrint('📦 Activity summary queued (offline) — will sync on reconnect');
     }
+  }
+
+  /// Format activity summary as a readable message for the agent.
+  String _formatSummaryMessage(Map<String, dynamic> s) {
+    return '[Fitness Activity Complete]\n'
+        'Type: ${s['activityLabel']} ${s['activityType']}\n'
+        'Name: ${s['name']}\n'
+        'Duration: ${s['durationMinutes']} min\n'
+        'Distance: ${s['distanceKm']} km\n'
+        'Avg Speed: ${s['avgSpeedKmh']} km/h\n'
+        'Elevation: ↑${s['elevationGainM']}m ↓${s['elevationLossM']}m\n'
+        'Max Altitude: ${s['maxAltitudeM']}m\n'
+        'Waypoints: ${s['waypointCount']}\n'
+        'GPX: ${s['hasGpx'] ? 'saved locally' : 'none'}\n'
+        'Start: ${s['startTime']}\n'
+        'End: ${s['endTime']}';
   }
 
   /// Save unsent summary to local queue file.
@@ -393,7 +415,12 @@ class HikeService extends ChangeNotifier {
         if (line.trim().isEmpty) continue;
         try {
           final summary = jsonDecode(line) as Map<String, dynamic>;
-          _nodeConnection!.sendNodeEvent('fitness.activity.complete', summary);
+          final message = _formatSummaryMessage(summary);
+          _nodeConnection!.sendNodeEvent('agent.request', {
+            'message': message,
+            'sessionKey': '',
+            'deliver': false,
+          });
           sent++;
         } catch (_) {}
       }

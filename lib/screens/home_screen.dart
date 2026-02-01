@@ -276,9 +276,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ListTile(
               leading: const Icon(Icons.photo_library),
               title: const Text('Choose from Gallery'),
+              subtitle: const Text('Select one or more photos'),
               onTap: () {
                 Navigator.pop(ctx);
-                _pickImage(ImageSource.gallery);
+                _pickMultipleImages();
               },
             ),
           ],
@@ -287,9 +288,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Pick a single image from camera.
   Future<void> _pickImage(ImageSource source) async {
     try {
-      // Request camera permission explicitly for camera source
       if (source == ImageSource.camera) {
         final status = await Permission.camera.request();
         if (!status.isGranted) {
@@ -329,6 +330,110 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to pick image: $e')),
+        );
+      }
+    }
+  }
+
+  static const int _maxMultiPhotos = 10;
+
+  /// Pick multiple images from gallery and send them sequentially.
+  Future<void> _pickMultipleImages() async {
+    try {
+      debugPrint('📷 Opening multi-image picker...');
+      final xfiles = await _imagePicker.pickMultiImage(
+        maxWidth: 1920,
+        maxHeight: 1920,
+        imageQuality: 80,
+        limit: _maxMultiPhotos,
+      );
+      if (xfiles.isEmpty) {
+        debugPrint('📷 Multi-image picker cancelled');
+        return;
+      }
+
+      // Enforce limit (some Android versions ignore the limit param)
+      final selected = xfiles.length > _maxMultiPhotos
+          ? xfiles.sublist(0, _maxMultiPhotos)
+          : xfiles;
+
+      if (xfiles.length > _maxMultiPhotos && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Max $_maxMultiPhotos photos — first $_maxMultiPhotos selected')),
+        );
+      }
+
+      debugPrint('📷 Selected ${selected.length} image(s)');
+      final chat = context.read<ChatService>();
+
+      // Wait for gateway connection before starting
+      if (!chat.isReady) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Waiting for connection...')),
+          );
+        }
+        final ready = await chat.waitForReady(timeout: const Duration(seconds: 10));
+        if (!ready) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Not connected — photos not sent')),
+            );
+          }
+          return;
+        }
+      }
+
+      int sent = 0;
+      int failed = 0;
+
+      // Send each image silently (no per-photo caption)
+      for (int i = 0; i < selected.length; i++) {
+        if (!chat.isReady) {
+          debugPrint('📷 Lost connection at image ${i + 1}, waiting...');
+          final reconnected = await chat.waitForReady(timeout: const Duration(seconds: 10));
+          if (!reconnected) {
+            debugPrint('📷 Could not reconnect, skipping remaining ${selected.length - i} images');
+            failed += selected.length - i;
+            break;
+          }
+        }
+
+        final xfile = selected[i];
+        debugPrint('📷 Sending image ${i + 1}/${selected.length}: ${xfile.path}');
+        final file = File(xfile.path);
+        await chat.sendFile(
+          file: file,
+          type: 'image',
+          mimeType: xfile.mimeType ?? 'image/jpeg',
+        );
+        sent++;
+
+        // Pace sends to avoid flooding gateway
+        if (i < selected.length - 1) {
+          await Future.delayed(const Duration(milliseconds: 800));
+        }
+      }
+
+      // Send one summary message after all photos
+      if (sent > 1) {
+        final summary = failed > 0
+            ? '📷 $sent photos sent, $failed failed'
+            : '📷 $sent photos';
+        chat.sendMessage(summary);
+      }
+      _scrollToBottom();
+
+      if (mounted && failed > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$sent sent, $failed failed')),
+        );
+      }
+    } catch (e, stack) {
+      debugPrint('❌ Multi-image picker error: $e\n$stack');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to pick images: $e')),
         );
       }
     }

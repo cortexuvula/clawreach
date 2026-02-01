@@ -27,6 +27,8 @@ class CachedTileProvider extends TileProvider {
 }
 
 /// ImageProvider that checks local cache before network.
+/// On failure, throws instead of returning transparent pixel so Flutter
+/// retries on next paint rather than caching a blank tile forever.
 class CachedTileImage extends ImageProvider<CachedTileImage> {
   final String url;
   final String? cacheDir;
@@ -43,6 +45,10 @@ class CachedTileImage extends ImageProvider<CachedTileImage> {
     return MultiFrameImageStreamCompleter(
       codec: _loadTile(key, decode),
       scale: 1.0,
+      informationCollector: () => [
+        DiagnosticsProperty<ImageProvider>('Image provider', this),
+        DiagnosticsProperty<CachedTileImage>('Image key', key),
+      ],
     );
   }
 
@@ -57,47 +63,46 @@ class CachedTileImage extends ImageProvider<CachedTileImage> {
           final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
           return decode(buffer);
         }
-      } catch (_) {
+      } catch (e) {
+        debugPrint('🗺️ Cache read error for ${key.url}: $e');
         // Cache corrupt, fall through to network
       }
     }
 
-    // Fetch from network
-    try {
-      final response = await http.get(
-        Uri.parse(key.url),
-        headers: {'User-Agent': 'ClawReach/1.0 (com.clawreach.clawreach)'},
-      ).timeout(const Duration(seconds: 10));
+    // Fetch from network with retry
+    Exception? lastError;
+    for (int attempt = 0; attempt < 2; attempt++) {
+      try {
+        final response = await http.get(
+          Uri.parse(key.url),
+          headers: {'User-Agent': 'ClawReach/1.0 (com.clawreach.clawreach)'},
+        ).timeout(const Duration(seconds: 15));
 
-      if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
-        // Save to cache (fire-and-forget)
-        if (cacheFile != null) {
-          cacheFile.parent.create(recursive: true).then((_) {
-            cacheFile.writeAsBytes(response.bodyBytes);
-          }).catchError((_) {});
+        if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
+          // Save to cache (fire-and-forget)
+          if (cacheFile != null) {
+            cacheFile.parent.create(recursive: true).then((_) {
+              cacheFile.writeAsBytes(response.bodyBytes);
+            }).catchError((_) {});
+          }
+
+          final buffer = await ui.ImmutableBuffer.fromUint8List(response.bodyBytes);
+          return decode(buffer);
         }
-
-        final buffer = await ui.ImmutableBuffer.fromUint8List(response.bodyBytes);
-        return decode(buffer);
+        lastError = Exception('HTTP ${response.statusCode}');
+      } catch (e) {
+        lastError = e is Exception ? e : Exception(e.toString());
+        if (attempt == 0) {
+          await Future.delayed(const Duration(milliseconds: 500));
+        }
       }
-    } catch (_) {
-      // Network failed — if cache exists but was corrupt, try once more
     }
 
-    // Return a 1x1 transparent pixel as fallback
-    final fallback = Uint8List.fromList([
-      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG header
-      0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-      0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
-      0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
-      0x54, 0x78, 0x9C, 0x62, 0x00, 0x00, 0x00, 0x02,
-      0x00, 0x01, 0xE5, 0x27, 0xDE, 0xFC, 0x00, 0x00,
-      0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42,
-      0x60, 0x82,
-    ]);
-    final buffer = await ui.ImmutableBuffer.fromUint8List(fallback);
-    return decode(buffer);
+    // DON'T return transparent pixel — evict from Flutter's image cache
+    // so the tile will be retried on next paint cycle.
+    PaintingBinding.instance.imageCache.evict(this);
+    debugPrint('🗺️ Tile load failed (will retry): ${key.url} — $lastError');
+    throw lastError ?? Exception('Tile load failed');
   }
 
   File? _getCacheFile(String url) {

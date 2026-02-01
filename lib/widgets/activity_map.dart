@@ -24,6 +24,7 @@ class ActivityMap extends StatefulWidget {
 class _ActivityMapState extends State<ActivityMap> {
   final MapController _mapController = MapController();
   int _lastWaypointCount = 0;
+  bool _hasFittedBounds = false;
 
   @override
   void didUpdateWidget(ActivityMap oldWidget) {
@@ -39,6 +40,24 @@ class _ActivityMapState extends State<ActivityMap> {
         );
       } catch (_) {}
     }
+  }
+
+  void _fitBounds(LatLngBounds bounds) {
+    if (_hasFittedBounds) return;
+    _hasFittedBounds = true;
+    // Use post-frame callback to ensure the widget has its final layout size
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      try {
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds: bounds,
+            padding: const EdgeInsets.all(30),
+          ),
+        );
+      } catch (e) {
+        debugPrint('🗺️ fitCamera error: $e');
+      }
+    });
   }
 
   @override
@@ -57,6 +76,12 @@ class _ActivityMapState extends State<ActivityMap> {
         .toList();
 
     // Calculate bounds for the track
+    LatLngBounds? bounds;
+    if (!widget.isLive && points.length > 1) {
+      bounds = LatLngBounds.fromPoints(points);
+    }
+
+    // For non-live maps, start centered on the track
     final center = widget.isLive
         ? points.last
         : LatLng(
@@ -64,34 +89,22 @@ class _ActivityMapState extends State<ActivityMap> {
             points.map((p) => p.longitude).reduce((a, b) => a + b) / points.length,
           );
 
-    // Fit bounds for completed tracks
-    double initialZoom = 15.0;
-    LatLngBounds? bounds;
-    if (!widget.isLive && points.length > 1) {
-      bounds = LatLngBounds.fromPoints(points);
-    }
-
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: FlutterMap(
         mapController: _mapController,
         options: MapOptions(
           initialCenter: center,
-          initialZoom: initialZoom,
+          initialZoom: 15.0,
           interactionOptions: InteractionOptions(
             flags: widget.interactive
                 ? InteractiveFlag.all
                 : InteractiveFlag.none,
           ),
           onMapReady: () {
-            // Fit to bounds after map is ready (for completed tracks)
+            // Fit bounds after map is fully ready + laid out
             if (bounds != null) {
-              _mapController.fitCamera(
-                CameraFit.bounds(
-                  bounds: bounds!,
-                  padding: const EdgeInsets.all(40),
-                ),
-              );
+              _fitBounds(bounds!);
             }
           },
         ),
