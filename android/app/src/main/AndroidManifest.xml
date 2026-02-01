@@ -6,7 +6,7 @@
     <uses-feature android:name="android.hardware.camera.front" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <application
-        android:label="clawreach"
+        android:label="Claw Reach"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

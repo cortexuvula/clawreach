@@ -172,7 +172,7 @@ class _HomeScreenState extends State<HomeScreen> {
         title: Row(
           children: [
             const Text('🦊 ', style: TextStyle(fontSize: 24)),
-            const Text('ClawReach'),
+            const Text('Claw Reach'),
             const SizedBox(width: 12),
             _buildAppBarStatus(gateway, chat, nodeConn),
           ],
