@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/gateway_config.dart';
 import '../models/message.dart' as msg;
@@ -9,6 +11,8 @@ import 'crypto_service.dart';
 /// Manages WebSocket connection to OpenClaw gateway.
 class GatewayService extends ChangeNotifier {
   final CryptoService _crypto;
+  static const _uuid = Uuid();
+  static const _protocolVersion = 3;
 
   WebSocketChannel? _channel;
   msg.GatewayConnectionState _state = msg.GatewayConnectionState.disconnected;
@@ -87,27 +91,35 @@ class GatewayService extends ChangeNotifier {
 
       debugPrint('📨 Received: $type');
 
-      switch (type) {
-        case 'connect.challenge':
+      if (type == 'event') {
+        final event = json['event'] as String? ?? '';
+        if (event == 'connect.challenge') {
           _handleChallenge(json);
-          break;
-        case 'connect.ok':
+          return;
+        }
+      } else if (type == 'res') {
+        // Response to our connect request
+        final ok = json['ok'] as bool? ?? false;
+        if (ok && _state == msg.GatewayConnectionState.authenticating) {
           _handleConnectOk(json);
-          break;
-        case 'connect.error':
+          return;
+        } else if (!ok && _state == msg.GatewayConnectionState.authenticating) {
           _handleConnectError(json);
-          break;
-        default:
-          _messages.add(msg.GatewayMessage.fromJson(json));
-          notifyListeners();
+          return;
+        }
       }
+
+      // All other messages
+      _messages.add(msg.GatewayMessage.fromJson(json));
+      notifyListeners();
     } catch (e) {
       debugPrint('❌ Message parse error: $e');
     }
   }
 
   Future<void> _handleChallenge(Map<String, dynamic> json) async {
-    _nonce = json['nonce'] as String?;
+    final payload = json['payload'] as Map<String, dynamic>?;
+    _nonce = payload?['nonce'] as String?;
     if (_nonce == null) {
       debugPrint('❌ No nonce in challenge');
       _errorMessage = 'Invalid challenge from gateway';
@@ -115,25 +127,65 @@ class GatewayService extends ChangeNotifier {
       return;
     }
 
-    debugPrint('🔐 Got challenge, signing nonce...');
+    debugPrint('🔐 Got challenge nonce: ${_nonce!.substring(0, 8)}...');
 
     try {
-      final publicKey = await _crypto.getPublicKeyHex();
-      final signature = await _crypto.sign(_nonce!);
+      final publicKeyB64Url = await _crypto.getPublicKeyBase64Url();
+      final publicKeyRaw = await _crypto.getPublicKeyRaw();
+
+      // Device ID = SHA-256 hex of raw public key bytes
+      final deviceId = sha256.convert(publicKeyRaw).toString();
+      final signedAtMs = DateTime.now().millisecondsSinceEpoch;
+      final token = _config?.token ?? '';
+      final nodeName = _config?.nodeName ?? 'ClawReach';
+
+      // Build device auth payload: v2|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce
+      // Must match exactly what the server rebuilds from connect params
+      const clientId = 'openclaw-android';
+      const clientMode = 'node';
+      const role = 'node';
+      const scopesList = <String>[]; // empty for node role
+      final scopesStr = scopesList.join(',');
+      final authPayload =
+          'v2|$deviceId|$clientId|$clientMode|$role|$scopesStr|$signedAtMs|$token|$_nonce';
+
+      debugPrint('🔐 Auth payload: ${authPayload.substring(0, 40)}...');
+
+      // Sign the payload string (UTF-8 encoded)
+      final signature = await _crypto.signString(authPayload);
 
       final connectMsg = {
-        'type': 'connect',
-        'token': _config?.token ?? '',
-        'publicKey': publicKey,
-        'signature': signature,
-        'nonce': _nonce,
-        'name': _config?.nodeName ?? 'ClawReach',
-        'platform': 'flutter',
-        'capabilities': ['camera', 'canvas', 'notifications'],
+        'type': 'req',
+        'method': 'connect',
+        'id': _uuid.v4(),
+        'params': {
+          'minProtocol': _protocolVersion,
+          'maxProtocol': _protocolVersion,
+          'client': {
+            'id': clientId,
+            'displayName': nodeName,
+            'version': '0.1.0',
+            'platform': 'Android',
+            'mode': clientMode,
+          },
+          'role': role,
+          'scopes': scopesList,
+          'caps': ['camera', 'canvas', 'notifications'],
+          'auth': {
+            'token': token,
+          },
+          'device': {
+            'id': deviceId,
+            'publicKey': publicKeyB64Url,
+            'signature': signature,
+            'signedAt': signedAtMs,
+            'nonce': _nonce,
+          },
+        },
       };
 
       _channel?.sink.add(jsonEncode(connectMsg));
-      debugPrint('🔐 Sent connect with signature');
+      debugPrint('🔐 Sent connect request with device auth');
     } catch (e) {
       debugPrint('❌ Auth failed: $e');
       _errorMessage = 'Authentication failed: $e';
@@ -147,9 +199,10 @@ class GatewayService extends ChangeNotifier {
   }
 
   void _handleConnectError(Map<String, dynamic> json) {
-    final error = json['error'] as String? ?? 'Unknown error';
-    debugPrint('❌ Connect error: $error');
-    _errorMessage = error;
+    final error = json['error'] as Map<String, dynamic>?;
+    final message = error?['message'] as String? ?? 'Unknown error';
+    debugPrint('❌ Connect error: $message');
+    _errorMessage = message;
     _setState(msg.GatewayConnectionState.error);
     _scheduleReconnect();
   }

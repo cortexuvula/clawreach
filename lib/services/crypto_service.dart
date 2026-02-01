@@ -28,8 +28,17 @@ class CryptoService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Get public key hex for authentication.
+  /// Get public key as base64url (no padding) for gateway auth.
+  Future<String> getPublicKeyBase64Url() => _keyManager.getPublicKeyBase64Url();
+
+  /// Get raw public key bytes (for hashing).
+  Future<List<int>> getPublicKeyRaw() => _keyManager.getPublicKeyRaw();
+
+  /// Get public key hex (for display).
   Future<String> getPublicKeyHex() => _keyManager.getPublicKeyHex();
+
+  /// Sign a string payload (UTF-8) and return base64url signature.
+  Future<String> signString(String payload) => _keyManager.sign(payload);
 
   /// Sign a nonce for challenge-response auth.
   Future<String> sign(String nonce) => _keyManager.sign(nonce);
