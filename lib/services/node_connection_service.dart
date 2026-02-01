@@ -218,6 +218,7 @@ class NodeConnectionService extends ChangeNotifier {
         },
       });
 
+      debugPrint('🔐 [Node] Device ID: $deviceId');
       debugPrint('🔐 [Node] Sent node connect request');
     } catch (e) {
       debugPrint('❌ [Node] Auth failed: $e');

@@ -223,14 +223,33 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _pickImage(ImageSource source) async {
     try {
+      // Request camera permission explicitly for camera source
+      if (source == ImageSource.camera) {
+        final status = await Permission.camera.request();
+        if (!status.isGranted) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Camera permission required')),
+            );
+          }
+          return;
+        }
+      }
+
+      debugPrint('📷 Picking image from ${source.name}...');
       final xfile = await _imagePicker.pickImage(
         source: source,
         maxWidth: 1920,
         maxHeight: 1920,
         imageQuality: 80,
+        preferredCameraDevice: CameraDevice.rear,
       );
-      if (xfile == null) return;
+      if (xfile == null) {
+        debugPrint('📷 Image picker cancelled');
+        return;
+      }
 
+      debugPrint('📷 Got image: ${xfile.path} (mime: ${xfile.mimeType})');
       final file = File(xfile.path);
       final chat = context.read<ChatService>();
       await chat.sendFile(
@@ -239,7 +258,8 @@ class _HomeScreenState extends State<HomeScreen> {
         mimeType: xfile.mimeType ?? 'image/jpeg',
       );
       _scrollToBottom();
-    } catch (e) {
+    } catch (e, stack) {
+      debugPrint('❌ Image picker error: $e\n$stack');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to pick image: $e')),
