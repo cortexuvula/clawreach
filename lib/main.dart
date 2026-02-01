@@ -27,6 +27,7 @@ void main() async {
   final location = LocationService(nodeConnection);
   final canvasService = CanvasService(nodeConnection);
   final hikeService = HikeService();
+  hikeService.setNodeConnection(nodeConnection);
 
   // Wire raw gateway messages to chat service
   gateway.onRawMessage = chat.handleGatewayMessage;

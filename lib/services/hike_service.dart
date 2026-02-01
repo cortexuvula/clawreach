@@ -6,10 +6,17 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:uuid/uuid.dart';
 import '../models/hike_track.dart';
+import 'node_connection_service.dart';
 
-/// Manages GPS hike tracking with local storage.
+/// Manages GPS fitness tracking with local storage and gateway sync.
 class HikeService extends ChangeNotifier {
   static const _uuid = Uuid();
+  NodeConnectionService? _nodeConnection;
+
+  /// Wire up the node connection for syncing completed activities to gateway.
+  void setNodeConnection(NodeConnectionService nodeConn) {
+    _nodeConnection = nodeConn;
+  }
 
   HikeTrack? _activeTrack;
   StreamSubscription<Position>? _positionSub;
@@ -61,8 +68,8 @@ class HikeService extends ChangeNotifier {
       accuracy: LocationAccuracy.high,
       distanceFilter: 0, // fire every interval regardless of movement
       intervalDuration: const Duration(seconds: 10),
-      foregroundNotificationConfig: const ForegroundNotificationConfig(
-        notificationTitle: 'ClawReach — Tracking Hike',
+      foregroundNotificationConfig: ForegroundNotificationConfig(
+        notificationTitle: 'ClawReach — Tracking ${type.label}',
         notificationText: 'GPS logging active',
         notificationChannelName: 'Hike Tracking',
         enableWakeLock: true,
@@ -127,6 +134,9 @@ class HikeService extends ChangeNotifier {
     final track = _activeTrack!;
     debugPrint('${track.activityType.emoji} Activity stopped: ${track.waypoints.length} waypoints, '
         '${track.totalDistanceKm.toStringAsFixed(2)} km, GPX: ${track.gpxPath}');
+
+    // Sync summary to gateway so Fred can log it
+    _syncToGateway(track);
 
     notifyListeners();
     return track;
@@ -306,6 +316,35 @@ class HikeService extends ChangeNotifier {
     final dir = Directory('${appDir.path}/hikes');
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;
+  }
+
+  /// Send activity summary to gateway for memory logging.
+  void _syncToGateway(HikeTrack track) {
+    if (_nodeConnection == null || !_nodeConnection!.isConnected) {
+      debugPrint('⚠️ No gateway connection — activity summary not synced');
+      return;
+    }
+
+    final duration = track.duration;
+    final summary = {
+      'type': 'fitness_activity_complete',
+      'activityType': track.activityType.name,
+      'activityLabel': track.activityType.label,
+      'name': track.name,
+      'startTime': track.startTime.toIso8601String(),
+      'endTime': track.endTime?.toIso8601String(),
+      'durationMinutes': duration.inMinutes,
+      'distanceKm': double.parse(track.totalDistanceKm.toStringAsFixed(3)),
+      'avgSpeedKmh': double.parse(track.avgSpeedKmh.toStringAsFixed(1)),
+      'elevationGainM': double.parse(track.elevationGain.toStringAsFixed(0)),
+      'elevationLossM': double.parse(track.elevationLoss.toStringAsFixed(0)),
+      'maxAltitudeM': double.parse(track.maxAltitude.toStringAsFixed(0)),
+      'waypointCount': track.waypoints.length,
+      'hasGpx': track.gpxPath != null,
+    };
+
+    _nodeConnection!.sendNodeEvent('fitness.activity.complete', summary);
+    debugPrint('📤 Activity summary synced to gateway');
   }
 
   @override
