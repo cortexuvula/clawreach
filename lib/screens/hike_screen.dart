@@ -532,13 +532,21 @@ class _HistorySheet extends StatelessWidget {
                     ? () => _showTrackMap(context, track)
                     : null,
               ),
-              // Mini map preview
+              // Mini map preview — non-interactive; tap opens detail view
               if (track.waypoints.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                  child: SizedBox(
-                    height: 150,
-                    child: ActivityMap(waypoints: track.waypoints),
+                  child: GestureDetector(
+                    onTap: () => _showTrackMap(context, track),
+                    child: SizedBox(
+                      height: 150,
+                      child: AbsorbPointer(
+                        child: ActivityMap(
+                          waypoints: track.waypoints,
+                          interactive: false,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
             ],

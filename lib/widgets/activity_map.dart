@@ -8,11 +8,13 @@ import '../services/cached_tile_provider.dart';
 class ActivityMap extends StatefulWidget {
   final List<HikeWaypoint> waypoints;
   final bool isLive; // If true, auto-follows latest position
+  final bool interactive; // If false, map ignores gestures (for previews)
 
   const ActivityMap({
     super.key,
     required this.waypoints,
     this.isLive = false,
+    this.interactive = true,
   });
 
   @override
@@ -76,8 +78,10 @@ class _ActivityMapState extends State<ActivityMap> {
         options: MapOptions(
           initialCenter: center,
           initialZoom: initialZoom,
-          interactionOptions: const InteractionOptions(
-            flags: InteractiveFlag.all,
+          interactionOptions: InteractionOptions(
+            flags: widget.interactive
+                ? InteractiveFlag.all
+                : InteractiveFlag.none,
           ),
           onMapReady: () {
             // Fit to bounds after map is ready (for completed tracks)

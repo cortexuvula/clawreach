@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../models/chat_message.dart';
@@ -107,32 +109,114 @@ class ChatService extends ChangeNotifier {
     }
   }
 
-  /// Send a chat message.
+  /// Send a text-only chat message.
   void sendMessage(String text) {
-    if (!isReady || text.trim().isEmpty) return;
+    sendMessageWithAttachments(text: text);
+  }
+
+  /// Send a chat message with optional attachments.
+  void sendMessageWithAttachments({
+    String text = '',
+    List<ChatAttachment> localAttachments = const [],
+    List<Map<String, dynamic>> gatewayAttachments = const [],
+  }) {
+    if (!isReady) return;
+    if (text.trim().isEmpty && gatewayAttachments.isEmpty) return;
 
     final idempotencyKey = _uuid.v4();
+
+    // Build display text
+    String displayText = text.trim();
+    if (displayText.isEmpty && localAttachments.isNotEmpty) {
+      final type = localAttachments.first.type;
+      displayText = type == 'audio' ? '🎤 Voice note' : '📷 Photo';
+    }
 
     _messages.add(ChatMessage(
       id: 'user-$idempotencyKey',
       role: 'user',
-      text: text.trim(),
+      text: displayText,
       timestamp: DateTime.now(),
       state: ChatMessageState.complete,
+      attachments: localAttachments,
     ));
     notifyListeners();
+
+    final params = <String, dynamic>{
+      'sessionKey': sessionKey!,
+      'message': text.trim().isEmpty
+          ? (localAttachments.isNotEmpty
+              ? (localAttachments.first.type == 'audio'
+                  ? '[voice note]'
+                  : '[photo]')
+              : '')
+          : text.trim(),
+      'idempotencyKey': idempotencyKey,
+    };
+
+    if (gatewayAttachments.isNotEmpty) {
+      params['attachments'] = gatewayAttachments;
+    }
 
     _gateway.sendRequest(
       method: 'chat.send',
       id: _uuid.v4(),
-      params: {
-        'sessionKey': sessionKey!,
-        'message': text.trim(),
-        'idempotencyKey': idempotencyKey,
-      },
+      params: params,
     );
 
-    debugPrint('💬 Sent: ${text.trim().substring(0, text.trim().length.clamp(0, 40))}');
+    debugPrint('💬 Sent: ${displayText.substring(0, displayText.length.clamp(0, 40))}'
+        '${gatewayAttachments.isNotEmpty ? " + ${gatewayAttachments.length} attachment(s)" : ""}');
+  }
+
+  /// Send a file (image or audio) as a chat message.
+  Future<void> sendFile({
+    required File file,
+    required String type, // 'image' or 'audio'
+    required String mimeType,
+    String caption = '',
+    Duration? duration,
+  }) async {
+    final bytes = await file.readAsBytes();
+    final b64 = base64Encode(bytes);
+    final fileName = file.path.split('/').last;
+
+    final sizeKb = bytes.length / 1024;
+    debugPrint('📎 Sending $type: $fileName (${sizeKb.toStringAsFixed(0)} KB)');
+
+    if (bytes.length > 5 * 1024 * 1024) {
+      // Too big for gateway (5MB limit)
+      _messages.add(ChatMessage(
+        id: 'error-${_uuid.v4()}',
+        role: 'user',
+        text: '⚠️ File too large (${(bytes.length / 1024 / 1024).toStringAsFixed(1)} MB, max 5 MB)',
+        timestamp: DateTime.now(),
+        state: ChatMessageState.error,
+      ));
+      notifyListeners();
+      return;
+    }
+
+    sendMessageWithAttachments(
+      text: caption,
+      localAttachments: [
+        ChatAttachment(
+          type: type,
+          mimeType: mimeType,
+          fileName: fileName,
+          filePath: file.path,
+          bytes: bytes,
+          duration: duration,
+        ),
+      ],
+      gatewayAttachments: [
+        {
+          'type': type,
+          'mimeType': mimeType,
+          'fileName': fileName,
+          'content': b64,
+        },
+      ],
+    );
   }
 
   @override
