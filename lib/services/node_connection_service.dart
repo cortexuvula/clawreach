@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
@@ -247,6 +246,24 @@ class NodeConnectionService extends ChangeNotifier {
         if (error != null) 'error': {'code': 'ERROR', 'message': error},
       },
     });
+  }
+
+  /// Send a node event to the gateway (e.g. user actions from canvas).
+  void sendNodeEvent(String event, Map<String, dynamic> payload) {
+    if (!_connected) {
+      debugPrint('⚠️ [Node] Cannot send event while disconnected');
+      return;
+    }
+    _send({
+      'type': 'req',
+      'method': 'node.event',
+      'id': _uuid.v4(),
+      'params': {
+        'event': event,
+        'payload': payload,
+      },
+    });
+    debugPrint('📤 [Node] Sent event: $event');
   }
 
   void _onDone() {
