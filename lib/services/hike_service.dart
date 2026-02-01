@@ -14,6 +14,7 @@ class HikeService extends ChangeNotifier {
   HikeTrack? _activeTrack;
   StreamSubscription<Position>? _positionSub;
   Timer? _durationTimer;
+  Timer? _fallbackTimer;
   bool _tracking = false;
   String? _error;
   Position? _lastPosition;
@@ -44,9 +45,20 @@ class HikeService extends ChangeNotifier {
     _tracking = true;
     notifyListeners();
 
+    // Grab initial position immediately (don't wait for movement)
+    try {
+      final initialPos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      ).timeout(const Duration(seconds: 10));
+      _onPosition(initialPos);
+      debugPrint('📍 Initial position: ${initialPos.latitude}, ${initialPos.longitude} (±${initialPos.accuracy.toStringAsFixed(0)}m)');
+    } catch (e) {
+      debugPrint('⚠️ Could not get initial position: $e');
+    }
+
     final locationSettings = AndroidSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 5, // meters — only log if moved 5m+
+      distanceFilter: 3, // meters — log if moved 3m+
       intervalDuration: const Duration(seconds: 10),
       foregroundNotificationConfig: const ForegroundNotificationConfig(
         notificationTitle: 'ClawReach — Tracking Hike',
@@ -67,6 +79,17 @@ class HikeService extends ChangeNotifier {
         notifyListeners();
       },
     );
+
+    // Also log position on a timer as fallback (in case distance filter blocks updates when standing still)
+    _fallbackTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
+      if (!_tracking) return;
+      try {
+        final pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+        ).timeout(const Duration(seconds: 5));
+        _onPosition(pos);
+      } catch (_) {}
+    });
 
     // Update UI timer (for duration display)
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -90,6 +113,8 @@ class HikeService extends ChangeNotifier {
     _positionSub = null;
     _durationTimer?.cancel();
     _durationTimer = null;
+    _fallbackTimer?.cancel();
+    _fallbackTimer = null;
 
     await _saveTrack();
     final track = _activeTrack!;
@@ -107,6 +132,8 @@ class HikeService extends ChangeNotifier {
     _positionSub = null;
     _durationTimer?.cancel();
     _durationTimer = null;
+    _fallbackTimer?.cancel();
+    _fallbackTimer = null;
     _activeTrack = null;
     notifyListeners();
   }
@@ -265,6 +292,7 @@ class HikeService extends ChangeNotifier {
   void dispose() {
     _positionSub?.cancel();
     _durationTimer?.cancel();
+    _fallbackTimer?.cancel();
     super.dispose();
   }
 }
