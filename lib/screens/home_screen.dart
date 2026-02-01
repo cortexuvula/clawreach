@@ -4,9 +4,11 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/gateway_config.dart';
 import '../models/message.dart' as msg;
+import '../services/canvas_service.dart';
 import '../services/chat_service.dart';
 import '../services/gateway_service.dart';
 import '../services/node_connection_service.dart';
+import '../widgets/canvas_overlay.dart';
 import '../widgets/chat_bubble.dart';
 import 'settings_screen.dart';
 
@@ -157,6 +159,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final gateway = context.watch<GatewayService>();
     final chat = context.watch<ChatService>();
     final nodeConn = context.watch<NodeConnectionService>();
+    final canvas = context.watch<CanvasService>();
 
     // Auto-scroll when new messages arrive or streaming updates
     if (chat.messages.length != _prevMessageCount) {
@@ -164,6 +167,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _scrollToBottom();
     } else if (chat.isStreaming) {
       _scrollToBottom(delay: 50);
+    }
+
+    // Canvas overlay takes over the whole screen when visible
+    if (canvas.isVisible) {
+      return const CanvasOverlay();
     }
 
     return Scaffold(

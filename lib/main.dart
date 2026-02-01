@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/camera_service.dart';
+import 'services/canvas_service.dart';
 import 'services/chat_service.dart';
 import 'services/crypto_service.dart';
 import 'services/gateway_service.dart';
@@ -23,6 +24,7 @@ void main() async {
   final camera = CameraService(nodeConnection);
   final notifications = NotificationService(nodeConnection);
   final location = LocationService(nodeConnection);
+  final canvasService = CanvasService(nodeConnection);
 
   // Wire raw gateway messages to chat service
   gateway.onRawMessage = chat.handleGatewayMessage;
@@ -40,6 +42,7 @@ void main() async {
     camera: camera,
     notifications: notifications,
     location: location,
+    canvasService: canvasService,
   ));
 }
 
@@ -51,6 +54,7 @@ class ClawReachApp extends StatelessWidget {
   final CameraService camera;
   final NotificationService notifications;
   final LocationService location;
+  final CanvasService canvasService;
 
   const ClawReachApp({
     super.key,
@@ -61,6 +65,7 @@ class ClawReachApp extends StatelessWidget {
     required this.camera,
     required this.notifications,
     required this.location,
+    required this.canvasService,
   });
 
   @override
@@ -74,6 +79,7 @@ class ClawReachApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: camera),
         ChangeNotifierProvider.value(value: notifications),
         ChangeNotifierProvider.value(value: location),
+        ChangeNotifierProvider.value(value: canvasService),
       ],
       child: MaterialApp(
         title: 'ClawReach',

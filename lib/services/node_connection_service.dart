@@ -37,6 +37,7 @@ class NodeConnectionService extends ChangeNotifier {
 
   bool get isConnected => _connected;
   String? get nodeId => _nodeId;
+  GatewayConfig? get activeConfig => _config;
 
   /// Register a handler for a node command (e.g. 'camera.snap').
   void registerHandler(String command, InvokeHandler handler) {
@@ -178,8 +179,14 @@ class NodeConnectionService extends ChangeNotifier {
           },
           'role': role,
           'scopes': <String>[],
-          'caps': ['camera', 'notifications', 'location'],
-          'commands': ['camera.snap', 'camera.list', 'system.notify', 'location.get'],
+          'caps': ['camera', 'notifications', 'location', 'canvas'],
+          'commands': [
+            'camera.snap', 'camera.list',
+            'system.notify', 'location.get',
+            'canvas.present', 'canvas.hide', 'canvas.navigate',
+            'canvas.eval', 'canvas.snapshot',
+            'canvas.a2ui.push', 'canvas.a2ui.pushJSONL', 'canvas.a2ui.reset',
+          ],
           'auth': {'token': token},
           'device': {
             'id': deviceId,
