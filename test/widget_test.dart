@@ -1,30 +1,39 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:clawreach/main.dart';
+import 'package:clawreach/models/gateway_config.dart';
+import 'package:clawreach/models/message.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  group('GatewayConfig', () {
+    test('generates correct WS URL from HTTPS', () {
+      final config = GatewayConfig(url: 'https://example.com:3000', token: 'test');
+      expect(config.wsUrl, 'wss://example.com:3000/ws/node');
+    });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    test('generates correct WS URL from HTTP', () {
+      final config = GatewayConfig(url: 'http://example.com:3000', token: 'test');
+      expect(config.wsUrl, 'ws://example.com:3000/ws/node');
+    });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    test('serializes to JSON', () {
+      final config = GatewayConfig(url: 'https://gw.example.com', token: 'abc123');
+      final json = config.toJson();
+      expect(json['url'], 'https://gw.example.com');
+      expect(json['token'], 'abc123');
+    });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    test('deserializes from JSON', () {
+      final config = GatewayConfig.fromJson({'url': 'https://test.com', 'token': 'xyz'});
+      expect(config.url, 'https://test.com');
+      expect(config.token, 'xyz');
+      expect(config.nodeName, 'ClawReach');
+    });
+  });
+
+  group('GatewayConnectionState', () {
+    test('has all expected states', () {
+      expect(GatewayConnectionState.values.length, 5);
+      expect(GatewayConnectionState.values, contains(GatewayConnectionState.connected));
+      expect(GatewayConnectionState.values, contains(GatewayConnectionState.disconnected));
+    });
   });
 }
