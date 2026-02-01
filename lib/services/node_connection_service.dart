@@ -28,6 +28,8 @@ class NodeConnectionService extends ChangeNotifier {
   Timer? _reconnectTimer;
   GatewayConfig? _config;
   String? _nonce;
+  bool _pairingRequested = false;
+  String? _pairToken; // Token issued after pairing approval
 
   /// Register command handlers here.
   final Map<String, InvokeHandler> _handlers = {};
@@ -117,18 +119,37 @@ class NodeConnectionService extends ChangeNotifier {
           _handleChallenge(json);
         } else if (event == 'node.invoke.request') {
           _handleInvokeRequest(json);
+        } else if (event == 'node.pair.resolved') {
+          _handlePairResolved(json);
         }
       } else if (type == 'res') {
         final ok = json['ok'] as bool? ?? false;
-        if (!_connected) {
+        final method = json['method'] as String? ?? '';
+        if (method == 'node.pair.request') {
+          if (ok) {
+            debugPrint('🔗 [Node] Pairing request submitted — waiting for approval...');
+            _pairingRequested = true;
+            notifyListeners();
+          } else {
+            final error = json['error'] as Map<String, dynamic>?;
+            debugPrint('❌ [Node] Pairing request failed: ${error?['message']}');
+            _scheduleReconnect();
+          }
+        } else if (!_connected) {
           if (ok) {
             _connected = true;
+            _pairingRequested = false;
             debugPrint('✅ [Node] Connected as node');
             notifyListeners();
           } else {
             final error = json['error'] as Map<String, dynamic>?;
-            debugPrint('❌ [Node] Connect rejected: ${error?['message']}');
-            _scheduleReconnect();
+            final errorMsg = error?['message'] as String? ?? '';
+            debugPrint('❌ [Node] Connect rejected: $errorMsg');
+            if (errorMsg.contains('pairing required') && !_pairingRequested) {
+              _requestPairing();
+            } else if (!_pairingRequested) {
+              _scheduleReconnect();
+            }
           }
         }
       }
@@ -200,6 +221,45 @@ class NodeConnectionService extends ChangeNotifier {
       debugPrint('🔐 [Node] Sent node connect request');
     } catch (e) {
       debugPrint('❌ [Node] Auth failed: $e');
+    }
+  }
+
+  /// Request pairing when connect is rejected with "pairing required".
+  void _requestPairing() {
+    debugPrint('🔗 [Node] Requesting pairing...');
+    _send({
+      'type': 'req',
+      'method': 'node.pair.request',
+      'id': _uuid.v4(),
+      'params': {
+        'nodeId': _nodeId ?? '',
+        'displayName': _config?.nodeName ?? 'ClawReach',
+        'platform': 'Android',
+        'caps': ['camera', 'notifications', 'location', 'canvas'],
+      },
+    });
+  }
+
+  /// Handle pairing approval/rejection event.
+  void _handlePairResolved(Map<String, dynamic> json) {
+    final payload = json['payload'] as Map<String, dynamic>?;
+    if (payload == null) return;
+
+    final status = payload['status'] as String? ?? '';
+    final token = payload['token'] as String?;
+
+    if (status == 'approved' && token != null) {
+      debugPrint('✅ [Node] Pairing approved! Reconnecting with token...');
+      _pairToken = token;
+      _pairingRequested = false;
+      // Reconnect — the new token will be used
+      if (_config != null) {
+        disconnect().then((_) => connect(_config!));
+      }
+    } else {
+      debugPrint('❌ [Node] Pairing $status');
+      _pairingRequested = false;
+      notifyListeners();
     }
   }
 

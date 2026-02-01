@@ -273,9 +273,17 @@ class GatewayService extends ChangeNotifier {
     final error = json['error'] as Map<String, dynamic>?;
     final message = error?['message'] as String? ?? 'Unknown error';
     debugPrint('❌ Connect error: $message');
-    _errorMessage = message;
-    _setState(msg.GatewayConnectionState.error);
-    _scheduleReconnect();
+
+    if (message.contains('pairing required')) {
+      _errorMessage = 'Waiting for pairing approval...';
+      _setState(msg.GatewayConnectionState.pairingPending);
+      // Retry periodically — approval will let us through
+      _scheduleReconnect(delayMs: 3000);
+    } else {
+      _errorMessage = message;
+      _setState(msg.GatewayConnectionState.error);
+      _scheduleReconnect();
+    }
   }
 
   void _onDone() {
@@ -293,9 +301,9 @@ class GatewayService extends ChangeNotifier {
     _scheduleReconnect();
   }
 
-  void _scheduleReconnect() {
+  void _scheduleReconnect({int? delayMs}) {
     if (_config?.autoReconnect != true) return;
-    final delay = _config?.reconnectDelayMs ?? 5000;
+    final delay = delayMs ?? _config?.reconnectDelayMs ?? 5000;
     debugPrint('🔄 Reconnecting in ${delay}ms...');
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(Duration(milliseconds: delay), () {

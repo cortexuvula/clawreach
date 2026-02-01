@@ -7,9 +7,11 @@ import '../models/message.dart' as msg;
 import '../services/canvas_service.dart';
 import '../services/chat_service.dart';
 import '../services/gateway_service.dart';
+import '../services/hike_service.dart';
 import '../services/node_connection_service.dart';
 import '../widgets/canvas_overlay.dart';
 import '../widgets/chat_bubble.dart';
+import 'hike_screen.dart';
 import 'settings_screen.dart';
 
 /// Main home screen with chat interface.
@@ -85,6 +87,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onConfigSaved(GatewayConfig config) {
     setState(() => _config = config);
+
+    // Connect (or reconnect) with the new config
+    final gateway = context.read<GatewayService>();
+    final nodeConn = context.read<NodeConnectionService>();
+    gateway.connect(config);
+    nodeConn.connect(config);
   }
 
   void _sendMessage() {
@@ -115,8 +123,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildAppBarStatus(GatewayService gateway, ChatService chat, NodeConnectionService nodeConn) {
     final (color, label) = switch (gateway.state) {
       msg.GatewayConnectionState.disconnected => (Colors.grey, 'Offline'),
-      msg.GatewayConnectionState.connecting => (Colors.orange, 'Connecting'),
-      msg.GatewayConnectionState.authenticating => (Colors.amber, 'Auth...'),
+      msg.GatewayConnectionState.connecting => (Colors.orange, 'Connecting...'),
+      msg.GatewayConnectionState.authenticating => (Colors.amber, 'Authenticating...'),
+      msg.GatewayConnectionState.pairingPending => (Colors.blue, 'Pairing...'),
       msg.GatewayConnectionState.connected => (
           chat.isReady ? Colors.green : Colors.lime,
           chat.isReady
@@ -186,6 +195,20 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
+          // Hike tracker button
+          Builder(builder: (ctx) {
+            final hikeService = ctx.watch<HikeService>();
+            return IconButton(
+              icon: hikeService.isTracking
+                  ? const Icon(Icons.hiking, color: Colors.green)
+                  : const Icon(Icons.hiking),
+              tooltip: 'Hike Tracker',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const HikeScreen()),
+              ),
+            );
+          }),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () => Navigator.push(
@@ -202,6 +225,39 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
+          // Pairing banner
+          if (gateway.state == msg.GatewayConnectionState.pairingPending)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: Colors.blue.withValues(alpha: 0.15),
+              child: Row(
+                children: [
+                  const SizedBox(
+                    width: 16, height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.blue),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Waiting for pairing approval',
+                          style: TextStyle(color: Colors.blue[300], fontSize: 13, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Ask the gateway admin to approve this device',
+                          style: TextStyle(color: Colors.blue[200], fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
           // Error banner
           if (gateway.state == msg.GatewayConnectionState.error &&
               gateway.errorMessage != null)
@@ -258,17 +314,28 @@ class _HomeScreenState extends State<HomeScreen> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            '🦊',
-                            style: TextStyle(fontSize: 48),
+                            gateway.state == msg.GatewayConnectionState.pairingPending
+                                ? '🔗'
+                                : gateway.state == msg.GatewayConnectionState.error
+                                    ? '⚠️'
+                                    : '🦊',
+                            style: const TextStyle(fontSize: 48),
                           ),
                           const SizedBox(height: 8),
                           Text(
                             chat.isReady
                                 ? 'Say something!'
-                                : gateway.isConnected
-                                    ? 'Syncing session...'
-                                    : 'Connect to start chatting',
+                                : gateway.state == msg.GatewayConnectionState.pairingPending
+                                    ? 'This device needs to be approved'
+                                    : gateway.state == msg.GatewayConnectionState.connecting
+                                        ? 'Connecting to gateway...'
+                                        : gateway.isConnected
+                                            ? 'Syncing session...'
+                                            : gateway.state == msg.GatewayConnectionState.error
+                                                ? gateway.errorMessage ?? 'Connection failed'
+                                                : 'Configure gateway to start',
                             style: const TextStyle(color: Colors.grey),
+                            textAlign: TextAlign.center,
                           ),
                         ],
                       ),

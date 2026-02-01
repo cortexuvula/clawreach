@@ -53,13 +53,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  String? _validateUrl(String url) {
+    if (url.isEmpty) return 'URL is required';
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
+      return 'Enter a valid URL (e.g. ws://192.168.1.100:18789)';
+    }
+    return null;
+  }
+
   Future<void> _save() async {
+    final url = _urlController.text.trim();
+    final token = _tokenController.text.trim();
+
+    // Validate
+    final urlError = _validateUrl(url);
+    if (urlError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(urlError), backgroundColor: Colors.red[700]),
+      );
+      return;
+    }
+    if (token.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gateway token is required'), backgroundColor: Colors.red[700]),
+      );
+      return;
+    }
+
     final config = GatewayConfig(
-      url: _urlController.text.trim(),
+      url: url,
       fallbackUrl: _fallbackUrlController.text.trim().isEmpty
           ? null
           : _fallbackUrlController.text.trim(),
-      token: _tokenController.text.trim(),
+      token: token,
       nodeName: _nameController.text.trim(),
       autoReconnect: _autoReconnect,
     );
@@ -68,7 +95,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setString('gateway_config', jsonEncode(config.toJson()));
 
     widget.onSave(config);
-    if (mounted) Navigator.of(context).pop();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Settings saved — connecting...'), duration: Duration(seconds: 2)),
+      );
+      Navigator.of(context).pop();
+    }
   }
 
   @override
@@ -94,7 +126,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           TextField(
             controller: _urlController,
             decoration: const InputDecoration(
-              hintText: 'http://192.168.1.171:18789',
+              hintText: 'ws://your-gateway-ip:port',
               border: OutlineInputBorder(),
               prefixIcon: Icon(Icons.wifi),
               helperText: 'Tried first — fast on local network',
@@ -111,7 +143,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           TextField(
             controller: _fallbackUrlController,
             decoration: const InputDecoration(
-              hintText: 'http://cortex-home.tail161478.ts.net:18789',
+              hintText: 'ws://hostname.your-tailnet.ts.net:port',
               border: OutlineInputBorder(),
               prefixIcon: Icon(Icons.vpn_lock),
               helperText: 'Used when local is unreachable (cellular/remote)',

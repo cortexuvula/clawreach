@@ -3,6 +3,7 @@ enum GatewayConnectionState {
   disconnected,
   connecting,
   authenticating,
+  pairingPending,
   connected,
   error,
 }

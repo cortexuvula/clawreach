@@ -8,6 +8,7 @@ import 'services/gateway_service.dart';
 import 'services/location_service.dart';
 import 'services/node_connection_service.dart';
 import 'services/notification_service.dart';
+import 'services/hike_service.dart';
 import 'screens/home_screen.dart';
 
 void main() async {
@@ -25,6 +26,7 @@ void main() async {
   final notifications = NotificationService(nodeConnection);
   final location = LocationService(nodeConnection);
   final canvasService = CanvasService(nodeConnection);
+  final hikeService = HikeService();
 
   // Wire raw gateway messages to chat service
   gateway.onRawMessage = chat.handleGatewayMessage;
@@ -43,6 +45,7 @@ void main() async {
     notifications: notifications,
     location: location,
     canvasService: canvasService,
+    hikeService: hikeService,
   ));
 }
 
@@ -55,6 +58,7 @@ class ClawReachApp extends StatelessWidget {
   final NotificationService notifications;
   final LocationService location;
   final CanvasService canvasService;
+  final HikeService hikeService;
 
   const ClawReachApp({
     super.key,
@@ -66,6 +70,7 @@ class ClawReachApp extends StatelessWidget {
     required this.notifications,
     required this.location,
     required this.canvasService,
+    required this.hikeService,
   });
 
   @override
@@ -80,6 +85,7 @@ class ClawReachApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: notifications),
         ChangeNotifierProvider.value(value: location),
         ChangeNotifierProvider.value(value: canvasService),
+        ChangeNotifierProvider.value(value: hikeService),
       ],
       child: MaterialApp(
         title: 'ClawReach',
