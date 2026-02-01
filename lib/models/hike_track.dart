@@ -124,6 +124,9 @@ class HikeTrack {
       : waypoints.map((w) => w.altitude).reduce(max);
 
   /// Haversine distance between two lat/lon points in meters.
+  static double haversineDistance(double lat1, double lon1, double lat2, double lon2) =>
+      _haversine(lat1, lon1, lat2, lon2);
+
   static double _haversine(double lat1, double lon1, double lat2, double lon2) {
     const R = 6371000.0; // Earth radius in meters
     final dLat = _toRad(lat2 - lat1);

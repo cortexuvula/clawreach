@@ -58,7 +58,7 @@ class HikeService extends ChangeNotifier {
 
     final locationSettings = AndroidSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 3, // meters — log if moved 3m+
+      distanceFilter: 0, // fire every interval regardless of movement
       intervalDuration: const Duration(seconds: 10),
       foregroundNotificationConfig: const ForegroundNotificationConfig(
         notificationTitle: 'ClawReach — Tracking Hike',
@@ -142,12 +142,25 @@ class HikeService extends ChangeNotifier {
     if (_activeTrack == null) return;
 
     // Skip very inaccurate readings
-    if (pos.accuracy > 50) {
+    if (pos.accuracy > 100) {
       debugPrint('📍 Skipped inaccurate reading (${pos.accuracy.toStringAsFixed(0)}m)');
       return;
     }
 
     _lastPosition = pos;
+
+    // Deduplicate: skip if < 1m from last logged point (saves storage)
+    if (_activeTrack!.waypoints.isNotEmpty) {
+      final last = _activeTrack!.waypoints.last;
+      final dist = HikeTrack.haversineDistance(
+        last.latitude, last.longitude, pos.latitude, pos.longitude,
+      );
+      if (dist < 1.0) {
+        // Still update UI with latest position but don't log
+        notifyListeners();
+        return;
+      }
+    }
 
     final waypoint = HikeWaypoint(
       latitude: pos.latitude,
