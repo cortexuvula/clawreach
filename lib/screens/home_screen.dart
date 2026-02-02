@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/gateway_config.dart';
 import '../models/message.dart' as msg;
 import '../services/canvas_service.dart';
+import '../services/capability_service.dart';
 import '../services/chat_service.dart';
 import '../services/gateway_service.dart';
 import '../services/hike_service.dart';
@@ -106,6 +107,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!nodeConn.isConnected) {
         nodeConn.connect(config);
       }
+
+      // Probe server capabilities
+      context.read<CapabilityService>().probe(config.url);
     }
   }
 
@@ -115,6 +119,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final nodeConn = context.read<NodeConnectionService>();
     gateway.connect(config);
     nodeConn.connect(config);
+
+    // Re-probe capabilities on reconnect
+    context.read<CapabilityService>().probe(config.url);
   }
 
   void _sendMessage() {
@@ -196,16 +203,30 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final chat = context.read<ChatService>();
 
-    // Try to transcribe via the server
-    final transcript = await _transcribeAudio(file);
+    // Transcription fallback chain:
+    // 1. Server-side faster-whisper (if available)
+    // 2. On-device Android STT
+    // 3. Send as audio attachment
+    final caps = context.read<CapabilityService>();
+    String? transcript;
+
+    // Try server-side transcription first
+    if (caps.hasTranscriptionServer) {
+      transcript = await _transcribeAudio(file);
+    }
+
+    // Fallback: on-device speech-to-text
+    if ((transcript == null || transcript.isEmpty) && !caps.hasTranscriptionServer) {
+      debugPrint('🎤 No transcription server, trying on-device STT...');
+      transcript = await _transcribeOnDevice(file);
+    }
 
     if (transcript != null && transcript.isNotEmpty) {
-      // Send as text with a voice note prefix
       debugPrint('🎤 Transcript: $transcript');
       chat.sendMessage('🎤 $transcript');
     } else {
-      // Fallback: send as audio attachment
-      debugPrint('🎤 Transcription failed, sending as audio file');
+      // Final fallback: send as audio attachment
+      debugPrint('🎤 All transcription failed, sending as audio file');
       await chat.sendFile(
         file: file,
         type: 'audio',
@@ -214,6 +235,17 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     _scrollToBottom();
+  }
+
+  /// Transcribe audio on-device using Android's speech recognition.
+  /// This is the fallback when no server-side transcription is available.
+  Future<String?> _transcribeOnDevice(File file) async {
+    // Note: Android SpeechToText works with live mic input, not audio files.
+    // For file-based on-device transcription we'd need a different approach.
+    // For now, return null to fall through to audio attachment.
+    // TODO: Integrate a local whisper model or use MediaPlayer + SpeechRecognizer
+    debugPrint('🎤 On-device STT not yet implemented for file input');
+    return null;
   }
 
   /// Transcribe audio file via the local transcription server.
@@ -303,12 +335,15 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       }
 
-      debugPrint('📷 Picking image from ${source.name}...');
+      final caps = context.read<CapabilityService>();
+      final maxDim = caps.maxImageDimension.toDouble();
+      final quality = caps.imageQuality;
+      debugPrint('📷 Picking image from ${source.name} (max ${maxDim.toInt()}px, ${quality}% quality)...');
       final xfile = await _imagePicker.pickImage(
         source: source,
-        maxWidth: 1920,
-        maxHeight: 1920,
-        imageQuality: 80,
+        maxWidth: maxDim,
+        maxHeight: maxDim,
+        imageQuality: quality,
         preferredCameraDevice: CameraDevice.rear,
       );
       if (xfile == null) {
@@ -340,11 +375,14 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Pick multiple images from gallery and send them sequentially.
   Future<void> _pickMultipleImages() async {
     try {
-      debugPrint('📷 Opening multi-image picker...');
+      final caps = context.read<CapabilityService>();
+      final maxDim = caps.maxImageDimension.toDouble();
+      final quality = caps.imageQuality;
+      debugPrint('📷 Opening multi-image picker (max ${maxDim.toInt()}px, ${quality}% quality)...');
       final xfiles = await _imagePicker.pickMultiImage(
-        maxWidth: 1920,
-        maxHeight: 1920,
-        imageQuality: 80,
+        maxWidth: maxDim,
+        maxHeight: maxDim,
+        imageQuality: quality,
         limit: _maxMultiPhotos,
       );
       if (xfiles.isEmpty) {
