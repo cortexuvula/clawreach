@@ -99,15 +99,88 @@ flutter run
 ### Optional: Server-Side Transcription
 For high-quality voice note transcription, run a [faster-whisper](https://github.com/SYSTRAN/faster-whisper) server on port 8014 of your gateway host. ClawReach auto-detects it on connect.
 
+## Device Pairing
+
+When ClawReach first connects, the gateway requires pairing approval. Here's how it works:
+
+### Normal Flow (when working)
+1. ClawReach connects → gateway creates pending pairing request
+2. Your AI agent sees the request via `nodes pending`
+3. Agent approves it → device is paired → ClawReach reconnects automatically
+
+### Known Issue (OpenClaw ≤ 2026.1.30)
+
+> **⚠️ The `nodes pending` and `nodes approve` agent tools may not see pairing requests from new devices.** This is tracked in [openclaw/openclaw#6836](https://github.com/openclaw/openclaw/issues/6836) with a fix in [PR #6846](https://github.com/openclaw/openclaw/pull/6846).
+
+The gateway has two separate pairing stores (`devices/` and `nodes/`) that don't communicate. When a new device connects, the pending request goes to `devices/pending.json`, but the agent tools only read from `nodes/pending.json`.
+
+**Workaround until the fix is merged:**
+
+**Option A: Manual approval**
+```bash
+# 1. Find the pending request (includes the device's public key)
+cat ~/.openclaw/devices/pending.json
+
+# 2. Copy the entry to paired.json with the publicKey
+# (the publicKey MUST match — an empty string won't work)
+python3 -c "
+import json, secrets, time
+with open('$HOME/.openclaw/devices/pending.json') as f:
+    pending = json.load(f)
+with open('$HOME/.openclaw/devices/paired.json') as f:
+    paired = json.load(f)
+
+for rid, req in list(pending.items()):
+    did = req['deviceId']
+    now = int(time.time() * 1000)
+    paired[did] = {
+        'deviceId': did,
+        'publicKey': req['publicKey'],  # Critical — must match!
+        'displayName': req.get('displayName', 'ClawReach'),
+        'platform': req.get('platform', 'Android'),
+        'clientId': req.get('clientId', ''),
+        'clientMode': req.get('clientMode', 'node'),
+        'role': req.get('role', 'node'),
+        'roles': ['operator', 'node'],
+        'scopes': req.get('scopes', []),
+        'remoteIp': req.get('remoteIp', ''),
+        'tokens': {
+            'node': {'token': secrets.token_hex(16), 'role': 'node', 'scopes': [], 'createdAtMs': now},
+            'operator': {'token': secrets.token_hex(16), 'role': 'operator', 'scopes': ['operator.admin'], 'createdAtMs': now},
+        },
+        'createdAtMs': now, 'approvedAtMs': now,
+    }
+    del pending[rid]
+    print(f'Approved: {req.get(\"displayName\", did[:16])}')
+
+with open('$HOME/.openclaw/devices/pending.json', 'w') as f:
+    json.dump(pending, f, indent=2)
+with open('$HOME/.openclaw/devices/paired.json', 'w') as f:
+    json.dump(paired, f, indent=2)
+print('Done — restart gateway to apply')
+"
+
+# 3. Restart the gateway
+openclaw gateway restart
+```
+
+**Option B: Apply the fix**
+
+If you're building OpenClaw from source, cherry-pick the fix from [PR #6846](https://github.com/openclaw/openclaw/pull/6846) which bridges the two pairing stores.
+
+### Re-pairing After App Reinstall
+
+Each install of ClawReach generates a new cryptographic keypair, which means a new device ID. After reinstalling or clearing app data, you'll need to pair again. Old entries in `paired.json` for previous installs can be safely removed.
+
 ## Protocol
 
 ClawReach implements the OpenClaw node protocol:
 
-1. **Connect** — WebSocket to `ws://gateway:port/ws/node`
+1. **Connect** — WebSocket to `ws://gateway:port`
 2. **Challenge** — Server sends `connect.challenge` with nonce
 3. **Auth** — Client signs nonce with Ed25519 private key
-4. **Paired** — Server approves device, bidirectional messaging begins
-5. **Events** — Camera snaps, location, canvas, chat, fitness sync
+4. **Pair** — If new device, server creates pending request; client retries until approved
+5. **Connected** — Bidirectional messaging: camera snaps, location, canvas, chat, fitness sync
 
 ## Built By
 
