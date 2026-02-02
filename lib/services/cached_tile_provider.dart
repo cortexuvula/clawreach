@@ -75,7 +75,7 @@ class CachedTileImage extends ImageProvider<CachedTileImage> {
       try {
         final response = await http.get(
           Uri.parse(key.url),
-          headers: {'User-Agent': 'ClawReach/1.0 (com.clawreach.clawreach)'},
+          headers: {'User-Agent': 'ClawReach/1.0 (org.clawreach.app)'},
         ).timeout(const Duration(seconds: 15));
 
         if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {

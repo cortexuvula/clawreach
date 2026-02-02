@@ -112,7 +112,7 @@ class _ActivityMapState extends State<ActivityMap> {
           // OpenStreetMap tiles with offline caching
           TileLayer(
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            userAgentPackageName: 'com.clawreach.clawreach',
+            userAgentPackageName: 'org.clawreach.app',
             tileProvider: CachedTileProvider(),
           ),
 
