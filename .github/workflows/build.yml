@@ -1,0 +1,179 @@
+name: Build All Platforms
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+
+env:
+  FLUTTER_VERSION: '3.32.2'
+
+jobs:
+  # ── Android ────────────────────────────────────────────────────
+  android:
+    name: 🤖 Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build apk --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+  # ── iOS ────────────────────────────────────────────────────────
+  ios:
+    name: 🍎 iOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build ios --release --no-codesign
+
+      - name: Archive iOS build
+        run: |
+          cd build/ios/iphoneos
+          zip -r ../../../ios-build.zip Runner.app
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-build
+          path: ios-build.zip
+
+  # ── Linux ──────────────────────────────────────────────────────
+  linux:
+    name: 🐧 Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+
+      - run: flutter pub get
+      - run: flutter build linux --release
+
+      - name: Archive Linux build
+        run: |
+          cd build/linux/x64/release/bundle
+          tar czf ../../../../../linux-build.tar.gz .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: linux-build.tar.gz
+
+  # ── Windows ────────────────────────────────────────────────────
+  windows:
+    name: 🪟 Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build windows --release
+
+      - name: Archive Windows build
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath windows-build.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: windows-build.zip
+
+  # ── macOS ──────────────────────────────────────────────────────
+  macos:
+    name: 🍏 macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build macos --release
+
+      - name: Archive macOS build
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r ../../../../../macos-build.zip clawreach.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: macos-build.zip
+
+  # ── Release ────────────────────────────────────────────────────
+  release:
+    name: 📦 Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, ios, linux, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Rename artifacts
+        run: |
+          mv artifacts/android-apk/app-release.apk artifacts/ClawReach-Android.apk
+          mv artifacts/ios-build/ios-build.zip artifacts/ClawReach-iOS.zip
+          mv artifacts/linux-build/linux-build.tar.gz artifacts/ClawReach-Linux.tar.gz
+          mv artifacts/windows-build/windows-build.zip artifacts/ClawReach-Windows.zip
+          mv artifacts/macos-build/macos-build.zip artifacts/ClawReach-macOS.zip
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/ClawReach-Android.apk
+            artifacts/ClawReach-iOS.zip
+            artifacts/ClawReach-Linux.tar.gz
+            artifacts/ClawReach-Windows.zip
+            artifacts/ClawReach-macOS.zip
+          generate_release_notes: true
