@@ -89,8 +89,11 @@ class ChatService extends ChangeNotifier {
         _activeRunId = null;
         // Suppress NO_REPLY / HEARTBEAT_OK — these aren't real responses
         final trimmed = text.trim();
-        if (trimmed == 'NO_REPLY' || trimmed == 'HEARTBEAT_OK') {
-          // Remove any streaming placeholder for this runId
+        // Gateway may truncate NO_REPLY to "NO_" — check all variants
+        final isNoReply = trimmed == 'NO_REPLY' || trimmed == 'NO_' ||
+            trimmed == 'HEARTBEAT_OK' || trimmed.isEmpty;
+        if (isNoReply) {
+          debugPrint('🔍 Suppressing response: "$trimmed" (runId=$runId)');
           _messages.removeWhere((m) => m.id == runId);
           notifyListeners();
           break;
