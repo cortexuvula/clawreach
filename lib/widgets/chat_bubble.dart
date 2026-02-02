@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 import '../models/chat_message.dart';
 
 /// A chat message bubble with optional media attachments.
@@ -20,7 +22,9 @@ class ChatBubble extends StatelessWidget {
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
+      child: GestureDetector(
+        onLongPressStart: (details) => _showContextMenu(context, details.globalPosition),
+        child: Container(
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.8,
         ),
@@ -132,6 +136,148 @@ class ChatBubble extends StatelessWidget {
             ),
           ],
         ),
+      ),
+      ),
+    );
+  }
+
+  void _showContextMenu(BuildContext context, Offset position) {
+    final hasText = message.text.isNotEmpty &&
+        message.text != '🎤 Voice note' &&
+        message.text != '📷 Photo';
+    final hasImages = message.attachments.any((a) => a.isImage);
+    final hasAudio = message.attachments.any((a) => a.isAudio);
+
+    final items = <PopupMenuEntry<String>>[
+      if (hasText)
+        const PopupMenuItem(
+          value: 'copy',
+          child: Row(
+            children: [
+              Icon(Icons.copy, size: 20),
+              SizedBox(width: 12),
+              Text('Copy text'),
+            ],
+          ),
+        ),
+      if (hasText)
+        const PopupMenuItem(
+          value: 'select',
+          child: Row(
+            children: [
+              Icon(Icons.select_all, size: 20),
+              SizedBox(width: 12),
+              Text('Select text'),
+            ],
+          ),
+        ),
+      if (hasImages || hasAudio)
+        const PopupMenuItem(
+          value: 'share_media',
+          child: Row(
+            children: [
+              Icon(Icons.share, size: 20),
+              SizedBox(width: 12),
+              Text('Share media'),
+            ],
+          ),
+        ),
+      if (hasImages)
+        const PopupMenuItem(
+          value: 'save_image',
+          child: Row(
+            children: [
+              Icon(Icons.save_alt, size: 20),
+              SizedBox(width: 12),
+              Text('Save image'),
+            ],
+          ),
+        ),
+      if (hasText)
+        const PopupMenuItem(
+          value: 'share_text',
+          child: Row(
+            children: [
+              Icon(Icons.share, size: 20),
+              SizedBox(width: 12),
+              Text('Share text'),
+            ],
+          ),
+        ),
+    ];
+
+    if (items.isEmpty) return;
+
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx, position.dy, position.dx + 1, position.dy + 1,
+      ),
+      items: items,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ).then((value) {
+      if (value == null) return;
+      switch (value) {
+        case 'copy':
+          Clipboard.setData(ClipboardData(text: message.text));
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Copied to clipboard'),
+                duration: Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+          break;
+        case 'select':
+          _showSelectableText(context);
+          break;
+        case 'share_text':
+          Share.share(message.text);
+          break;
+        case 'share_media':
+          final files = <XFile>[];
+          for (final att in message.attachments) {
+            if (att.filePath != null) {
+              files.add(XFile(att.filePath!));
+            }
+          }
+          if (files.isNotEmpty) {
+            Share.shareXFiles(files);
+          }
+          break;
+        case 'save_image':
+          // Images from filePath are already on device
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Image is saved in app storage'),
+                duration: Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+          break;
+      }
+    });
+  }
+
+  void _showSelectableText(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Select text'),
+        content: SelectableText(
+          message.text,
+          style: const TextStyle(fontSize: 15),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Done'),
+          ),
+        ],
       ),
     );
   }

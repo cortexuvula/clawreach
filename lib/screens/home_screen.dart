@@ -226,7 +226,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final config = _config;
       final gatewayHost = config != null
           ? Uri.parse(config.url).host
-          : '192.168.1.171';
+          : 'localhost';
       final url = 'http://$gatewayHost:8014/transcribe';
 
       debugPrint('🎤 Transcribing via $url (${(bytes.length / 1024).toStringAsFixed(0)} KB)...');
