@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/camera_service.dart';
@@ -12,6 +14,10 @@ import 'services/cached_tile_provider.dart';
 import 'services/hike_service.dart';
 import 'services/capability_service.dart';
 import 'screens/home_screen.dart';
+
+/// True on Android/iOS — platforms with camera, GPS, notifications.
+bool get isMobilePlatform =>
+    !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,10 +41,15 @@ void main() async {
   // Wire raw gateway messages to chat service
   gateway.onRawMessage = chat.handleGatewayMessage;
 
-  // Initialize services
-  await camera.init();
-  await notifications.init();
-  await location.init();
+  // Initialize platform-specific services (camera, notifications, location)
+  // only on mobile — these plugins crash on desktop/web.
+  if (isMobilePlatform) {
+    await camera.init();
+    await notifications.init();
+    await location.init();
+  } else {
+    debugPrint('🖥️ Desktop/Web — skipping camera, notifications, location init');
+  }
   await CachedTileProvider.init();
 
   runApp(ClawReachApp(
