@@ -201,8 +201,10 @@ jobs:
 
       - name: Archive macOS build
         run: |
-          cd build/macos/Build/Products/Release
-          zip -r ../../../../../macos-build.zip clawreach.app
+          # Must use ditto (not zip) to preserve code signature + notarization
+          ditto -c -k --keepParent \
+            build/macos/Build/Products/Release/clawreach.app \
+            macos-build.zip
 
       - uses: actions/upload-artifact@v4
         with:
