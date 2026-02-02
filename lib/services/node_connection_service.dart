@@ -28,8 +28,10 @@ class NodeConnectionService extends ChangeNotifier {
   Timer? _reconnectTimer;
   GatewayConfig? _config;
   String? _nonce;
-  bool _pairingRequested = false;
-  String? _pairToken; // Token issued after pairing approval
+  bool _pairingPending = false;
+  Timer? _pairingRetryTimer;
+  int _pairingRetryCount = 0;
+  static const _maxPairingRetries = 60; // 5 min at 5s intervals
 
   /// Register command handlers here.
   final Map<String, InvokeHandler> _handlers = {};
@@ -37,6 +39,7 @@ class NodeConnectionService extends ChangeNotifier {
   NodeConnectionService(this._crypto);
 
   bool get isConnected => _connected;
+  bool get isPairingPending => _pairingPending;
   String? get nodeId => _nodeId;
   GatewayConfig? get activeConfig => _config;
 
@@ -97,9 +100,11 @@ class NodeConnectionService extends ChangeNotifier {
 
   Future<void> disconnect() async {
     _reconnectTimer?.cancel();
+    _pairingRetryTimer?.cancel();
     await _channel?.sink.close();
     _channel = null;
     _connected = false;
+    _pairingPending = false;
     _activeUrl = null;
     notifyListeners();
   }
@@ -119,35 +124,28 @@ class NodeConnectionService extends ChangeNotifier {
           _handleChallenge(json);
         } else if (event == 'node.invoke.request') {
           _handleInvokeRequest(json);
-        } else if (event == 'node.pair.resolved') {
-          _handlePairResolved(json);
         }
       } else if (type == 'res') {
         final ok = json['ok'] as bool? ?? false;
-        final method = json['method'] as String? ?? '';
-        if (method == 'node.pair.request') {
-          if (ok) {
-            debugPrint('🔗 [Node] Pairing request submitted — waiting for approval...');
-            _pairingRequested = true;
-            notifyListeners();
-          } else {
-            final error = json['error'] as Map<String, dynamic>?;
-            debugPrint('❌ [Node] Pairing request failed: ${error?['message']}');
-            _scheduleReconnect();
-          }
-        } else if (!_connected) {
+        if (!_connected) {
           if (ok) {
             _connected = true;
-            _pairingRequested = false;
+            _pairingPending = false;
+            _pairingRetryCount = 0;
+            _pairingRetryTimer?.cancel();
             debugPrint('✅ [Node] Connected as node');
             notifyListeners();
           } else {
             final error = json['error'] as Map<String, dynamic>?;
             final errorMsg = error?['message'] as String? ?? '';
             debugPrint('❌ [Node] Connect rejected: $errorMsg');
-            if (errorMsg.contains('pairing required') && !_pairingRequested) {
-              _requestPairing();
-            } else if (!_pairingRequested) {
+            if (errorMsg.contains('pairing required')) {
+              // Gateway already created a pending request in devices/pending.json
+              // during the connect handshake. Don't send node.pair.request —
+              // the connection is closing. Just enter pairing-pending state
+              // and retry connect periodically until approved.
+              _enterPairingPendingState();
+            } else {
               _scheduleReconnect();
             }
           }
@@ -225,43 +223,42 @@ class NodeConnectionService extends ChangeNotifier {
     }
   }
 
-  /// Request pairing when connect is rejected with "pairing required".
-  void _requestPairing() {
-    debugPrint('🔗 [Node] Requesting pairing...');
-    _send({
-      'type': 'req',
-      'method': 'node.pair.request',
-      'id': _uuid.v4(),
-      'params': {
-        'nodeId': _nodeId ?? '',
-        'displayName': _config?.nodeName ?? 'ClawReach',
-        'platform': 'Android',
-        'caps': ['camera', 'notifications', 'location', 'canvas'],
-      },
-    });
-  }
-
-  /// Handle pairing approval/rejection event.
-  void _handlePairResolved(Map<String, dynamic> json) {
-    final payload = json['payload'] as Map<String, dynamic>?;
-    if (payload == null) return;
-
-    final status = payload['status'] as String? ?? '';
-    final token = payload['token'] as String?;
-
-    if (status == 'approved' && token != null) {
-      debugPrint('✅ [Node] Pairing approved! Reconnecting with token...');
-      _pairToken = token;
-      _pairingRequested = false;
-      // Reconnect — the new token will be used
-      if (_config != null) {
-        disconnect().then((_) => connect(_config!));
-      }
-    } else {
-      debugPrint('❌ [Node] Pairing $status');
-      _pairingRequested = false;
-      notifyListeners();
+  /// Enter pairing-pending state: the gateway already has our pending request
+  /// in devices/pending.json (created during the connect handshake).
+  /// We just need to retry connecting periodically until it's approved.
+  void _enterPairingPendingState() {
+    if (_pairingPending && _pairingRetryTimer?.isActive == true) {
+      return; // Already in pairing-pending state
     }
+
+    _pairingPending = true;
+    _pairingRetryCount = 0;
+    notifyListeners();
+
+    debugPrint('🔗 [Node] Pairing pending — gateway has our request. '
+        'Retrying connect every 5s until approved...');
+
+    _pairingRetryTimer?.cancel();
+    _pairingRetryTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      _pairingRetryCount++;
+      if (_pairingRetryCount > _maxPairingRetries) {
+        debugPrint('❌ [Node] Pairing timed out after $_maxPairingRetries retries');
+        timer.cancel();
+        _pairingPending = false;
+        notifyListeners();
+        return;
+      }
+
+      if (_connected) {
+        timer.cancel();
+        return;
+      }
+
+      debugPrint('🔗 [Node] Pairing retry $_pairingRetryCount/$_maxPairingRetries...');
+      if (_config != null) {
+        connect(_config!);
+      }
+    });
   }
 
   Future<void> _handleInvokeRequest(Map<String, dynamic> json) async {
@@ -353,6 +350,7 @@ class NodeConnectionService extends ChangeNotifier {
   @override
   void dispose() {
     _reconnectTimer?.cancel();
+    _pairingRetryTimer?.cancel();
     _channel?.sink.close();
     super.dispose();
   }
