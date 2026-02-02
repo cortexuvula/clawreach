@@ -64,6 +64,10 @@ class ChatService extends ChangeNotifier {
             .join() ??
         '';
 
+    final dbgId = runId.length > 8 ? runId.substring(0, 8) : runId;
+    final dbgText = text.length > 40 ? text.substring(0, 40) : text;
+    debugPrint('💬 Chat: state=$state id=$dbgId text="$dbgText"');
+
     switch (state) {
       case 'delta':
         _activeRunId = runId;
@@ -89,9 +93,9 @@ class ChatService extends ChangeNotifier {
         _activeRunId = null;
         // Suppress NO_REPLY / HEARTBEAT_OK — these aren't real responses
         final trimmed = text.trim();
-        // Gateway may truncate NO_REPLY to "NO_" — check all variants
+        // Gateway truncates NO_REPLY → "NO" or "NO_" — check all variants
         final isNoReply = trimmed == 'NO_REPLY' || trimmed == 'NO_' ||
-            trimmed == 'HEARTBEAT_OK' || trimmed.isEmpty;
+            trimmed == 'NO' || trimmed == 'HEARTBEAT_OK' || trimmed.isEmpty;
         if (isNoReply) {
           debugPrint('🔍 Suppressing response: "$trimmed" (runId=$runId)');
           _messages.removeWhere((m) => m.id == runId);
