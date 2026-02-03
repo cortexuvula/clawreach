@@ -17,6 +17,7 @@ import '../services/chat_service.dart';
 import '../services/gateway_service.dart';
 import '../services/hike_service.dart';
 import '../services/deep_link_service.dart';
+import '../services/foreground_service.dart';
 import '../services/node_connection_service.dart';
 import '../widgets/canvas_overlay.dart';
 import '../widgets/chat_bubble.dart';
@@ -81,14 +82,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     switch (state) {
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
-        debugPrint('💤 App backgrounded — pausing connections');
-        gateway.setBackgrounded(true);
-        nodeConn.setBackgrounded(true);
+        // If foreground service is running, keep connections alive
+        if (ForegroundServiceManager.isRunning) {
+          debugPrint('💤 App backgrounded — foreground service active, keeping connections');
+          ForegroundServiceManager.updateNotification(
+            text: 'Running in background',
+          );
+        } else {
+          debugPrint('💤 App backgrounded — pausing connections');
+          gateway.setBackgrounded(true);
+          nodeConn.setBackgrounded(true);
+        }
         break;
       case AppLifecycleState.resumed:
         debugPrint('☀️ App foregrounded — resuming connections');
         gateway.setBackgrounded(false);
         nodeConn.setBackgrounded(false);
+        if (ForegroundServiceManager.isRunning) {
+          ForegroundServiceManager.updateNotification(
+            text: 'Maintaining gateway connection',
+          );
+        }
         // If neither is connected and we have config, do sequential reconnect
         if (!gateway.isConnected && !nodeConn.isConnected && _config != null) {
           _connectSequential(_config!);
@@ -170,12 +184,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // This ensures the device is paired before node tries
     if (gateway.isConnected) {
       nodeConn.connect(config);
+      // Start foreground service to keep connection alive in background
+      ForegroundServiceManager.start();
     } else {
       // Listen for operator connection, then start node
       void listener() {
         if (gateway.isConnected) {
           gateway.removeListener(listener);
           nodeConn.connect(config);
+          ForegroundServiceManager.start();
         }
       }
       gateway.addListener(listener);

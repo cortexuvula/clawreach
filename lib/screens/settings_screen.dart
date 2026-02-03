@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/gateway_config.dart';
 import '../services/discovery_service.dart';
+import '../services/foreground_service.dart';
 import 'qr_scan_screen.dart';
 
 /// Settings screen for gateway connection configuration.
@@ -255,6 +256,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: const Text('Reconnect automatically with smart fallback'),
             value: _autoReconnect,
             onChanged: (v) => setState(() => _autoReconnect = v),
+          ),
+
+          // Background service
+          SwitchListTile(
+            title: const Text('Background service'),
+            subtitle: const Text('Keep connection alive when app is closed'),
+            value: ForegroundServiceManager.isRunning,
+            onChanged: (v) async {
+              if (v) {
+                await ForegroundServiceManager.start();
+              } else {
+                await ForegroundServiceManager.stop();
+              }
+              setState(() {});
+            },
           ),
 
           const SizedBox(height: 16),

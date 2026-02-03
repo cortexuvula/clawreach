@@ -1,6 +1,7 @@
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:provider/provider.dart';
 import 'services/camera_service.dart';
 import 'services/canvas_service.dart';
@@ -11,6 +12,7 @@ import 'services/location_service.dart';
 import 'services/node_connection_service.dart';
 import 'services/notification_service.dart';
 import 'services/cached_tile_provider.dart';
+import 'services/foreground_service.dart';
 import 'services/hike_service.dart';
 import 'services/capability_service.dart';
 import 'screens/home_screen.dart';
@@ -47,6 +49,7 @@ void main() async {
     await camera.init();
     await notifications.init();
     await location.init();
+    ForegroundServiceManager.init();
   } else {
     debugPrint('🖥️ Desktop/Web — skipping camera, notifications, location init');
   }
@@ -115,7 +118,7 @@ class ClawReachApp extends StatelessWidget {
           useMaterial3: true,
           brightness: Brightness.dark,
         ),
-        home: const HomeScreen(),
+        home: const WithForegroundTask(child: HomeScreen()),
       ),
     );
   }
