@@ -35,6 +35,7 @@ class GatewayService extends ChangeNotifier {
   msg.GatewayConnectionState get state => _state;
   String? get errorMessage => _errorMessage;
   String? get activeUrl => _activeUrl;
+  GatewayConfig? get activeConfig => _config;
   bool get isConnected => _state == msg.GatewayConnectionState.connected;
   List<msg.GatewayMessage> get messages => List.unmodifiable(_messages);
 
@@ -332,6 +333,14 @@ class GatewayService extends ChangeNotifier {
     _scheduleReconnect();
   }
 
+  bool _foregroundServiceActive = false;
+
+  /// Tell the service whether the foreground service is keeping us alive.
+  void setForegroundServiceActive(bool active) {
+    _foregroundServiceActive = active;
+    debugPrint('🔧 Foreground service: ${active ? "active" : "inactive"}');
+  }
+
   /// Notify the service that the app moved to background/foreground.
   void setBackgrounded(bool bg) {
     _backgrounded = bg;
@@ -340,16 +349,18 @@ class GatewayService extends ChangeNotifier {
       _reconnectAttempts = 0;
       debugPrint('🔄 App foregrounded — reconnecting now');
       connect(_config!);
-    } else if (bg) {
-      // Going to background — cancel pending reconnects to save battery
+    } else if (bg && !_foregroundServiceActive) {
+      // Going to background WITHOUT foreground service — pause to save battery
       _reconnectTimer?.cancel();
       debugPrint('💤 App backgrounded — pausing reconnects');
+    } else if (bg && _foregroundServiceActive) {
+      debugPrint('💪 App backgrounded but foreground service active — keeping reconnects');
     }
   }
 
   void _scheduleReconnect({int? delayMs}) {
     if (_config?.autoReconnect != true) return;
-    if (_backgrounded) {
+    if (_backgrounded && !_foregroundServiceActive) {
       debugPrint('💤 Backgrounded — skipping reconnect');
       return;
     }

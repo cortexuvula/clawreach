@@ -390,6 +390,13 @@ class NodeConnectionService extends ChangeNotifier {
     _scheduleReconnect();
   }
 
+  bool _foregroundServiceActive = false;
+
+  /// Tell the service whether the foreground service is keeping us alive.
+  void setForegroundServiceActive(bool active) {
+    _foregroundServiceActive = active;
+  }
+
   /// Notify the service that the app moved to background/foreground.
   void setBackgrounded(bool bg) {
     _backgrounded = bg;
@@ -397,16 +404,18 @@ class NodeConnectionService extends ChangeNotifier {
       _reconnectAttempts = 0;
       debugPrint('🔄 [Node] App foregrounded — reconnecting now');
       connect(_config!);
-    } else if (bg) {
+    } else if (bg && !_foregroundServiceActive) {
       _reconnectTimer?.cancel();
       _pairingRetryTimer?.cancel();
       debugPrint('💤 [Node] App backgrounded — pausing reconnects');
+    } else if (bg && _foregroundServiceActive) {
+      debugPrint('💪 [Node] Backgrounded but foreground service active — keeping alive');
     }
   }
 
   void _scheduleReconnect() {
     if (_config?.autoReconnect != true) return;
-    if (_backgrounded) {
+    if (_backgrounded && !_foregroundServiceActive) {
       debugPrint('💤 [Node] Backgrounded — skipping reconnect');
       return;
     }

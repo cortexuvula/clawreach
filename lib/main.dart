@@ -14,6 +14,7 @@ import 'services/notification_service.dart';
 import 'services/cached_tile_provider.dart';
 import 'services/foreground_service.dart';
 import 'services/hike_service.dart';
+import 'services/network_monitor_service.dart';
 import 'services/capability_service.dart';
 import 'screens/home_screen.dart';
 
@@ -39,9 +40,19 @@ void main() async {
   final hikeService = HikeService();
   hikeService.setNodeConnection(nodeConnection);
   final capabilities = CapabilityService();
+  final networkMonitor = NetworkMonitorService();
 
   // Wire raw gateway messages to chat service
   gateway.onRawMessage = chat.handleGatewayMessage;
+
+  // Wire network monitor to trigger reconnects on network change
+  networkMonitor.onNetworkReconnect = () {
+    if (!gateway.isConnected) {
+      debugPrint('📶 Network reconnect → gateway');
+      gateway.connect(gateway.activeConfig!);
+    }
+  };
+  await networkMonitor.init();
 
   // Initialize platform-specific services (camera, notifications, location)
   // only on mobile — these plugins crash on desktop/web.
@@ -66,6 +77,7 @@ void main() async {
     canvasService: canvasService,
     hikeService: hikeService,
     capabilities: capabilities,
+    networkMonitor: networkMonitor,
   ));
 }
 
@@ -80,6 +92,7 @@ class ClawReachApp extends StatelessWidget {
   final CanvasService canvasService;
   final HikeService hikeService;
   final CapabilityService capabilities;
+  final NetworkMonitorService networkMonitor;
 
   const ClawReachApp({
     super.key,
@@ -93,6 +106,7 @@ class ClawReachApp extends StatelessWidget {
     required this.canvasService,
     required this.hikeService,
     required this.capabilities,
+    required this.networkMonitor,
   });
 
   @override
@@ -109,6 +123,7 @@ class ClawReachApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: canvasService),
         ChangeNotifierProvider.value(value: hikeService),
         ChangeNotifierProvider.value(value: capabilities),
+        ChangeNotifierProvider.value(value: networkMonitor),
       ],
       child: MaterialApp(
         title: 'ClawReach',
