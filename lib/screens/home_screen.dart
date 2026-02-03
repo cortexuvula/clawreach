@@ -83,6 +83,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         debugPrint('☀️ App foregrounded — resuming connections');
         gateway.setBackgrounded(false);
         nodeConn.setBackgrounded(false);
+        // If neither is connected and we have config, do sequential reconnect
+        if (!gateway.isConnected && !nodeConn.isConnected && _config != null) {
+          _connectSequential(_config!);
+        }
         break;
       default:
         break;
@@ -122,30 +126,38 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         jsonDecode(configStr) as Map<String, dynamic>,
       );
       setState(() => _config = config);
+      _connectSequential(config);
+    }
+  }
 
-      final gateway = context.read<GatewayService>();
-      final nodeConn = context.read<NodeConnectionService>();
-      if (!gateway.isConnected) {
-        gateway.connect(config);
-      }
-      if (!nodeConn.isConnected) {
-        nodeConn.connect(config);
-      }
+  /// Connect operator first, then node — avoids double pairing requests.
+  Future<void> _connectSequential(GatewayConfig config) async {
+    final gateway = context.read<GatewayService>();
+    final nodeConn = context.read<NodeConnectionService>();
 
-      // Probe server capabilities
-      context.read<CapabilityService>().probe(config.url);
+    // Connect operator (webchat) first
+    await gateway.connect(config);
+    context.read<CapabilityService>().probe(config.url);
+
+    // Wait for operator to be fully connected before starting node
+    // This ensures the device is paired before node tries
+    if (gateway.isConnected) {
+      nodeConn.connect(config);
+    } else {
+      // Listen for operator connection, then start node
+      void listener() {
+        if (gateway.isConnected) {
+          gateway.removeListener(listener);
+          nodeConn.connect(config);
+        }
+      }
+      gateway.addListener(listener);
     }
   }
 
   void _onConfigSaved(GatewayConfig config) {
     setState(() => _config = config);
-    final gateway = context.read<GatewayService>();
-    final nodeConn = context.read<NodeConnectionService>();
-    gateway.connect(config);
-    nodeConn.connect(config);
-
-    // Re-probe capabilities on reconnect
-    context.read<CapabilityService>().probe(config.url);
+    _connectSequential(config);
   }
 
   void _sendMessage() {

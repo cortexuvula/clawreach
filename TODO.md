@@ -1,8 +1,18 @@
 # ClawReach TODO
 
 ## In Progress
+- [ ] **Persistent CI signing key** — upload keystore in GitHub Secrets so builds don't change signing key (no more uninstall/reinstall)
+- [ ] **Single pairing for both roles** — node connection waits for operator pairing, reuses same approval (one pairing instead of two)
+- [ ] **Hot-reload pairing** — gateway watches devices.json for changes, picks up approvals without restart
 - [ ] Canvas/A2UI — fix Column children format, test full round-trip
 - [ ] Test canvas.hide / canvas.eval / canvas.snapshot / canvas.a2ui.reset
+
+## Connection & Pairing Improvements
+- [ ] **QR code pairing** — gateway web UI shows QR with `clawreach://connect?url=...&token=...`, scan to configure
+- [ ] **mDNS/Bonjour discovery** — scan LAN for `_openclaw._tcp` service, auto-find gateway IP
+- [ ] **Deep link pairing** — `clawreach://connect?...` URI scheme, can be sent via Signal/message
+- [ ] **Token-free LAN pairing** — auto-trust devices on same subnet with on-device confirmation prompt
+- [ ] **Persistent connection service** — Android foreground service to keep node connection alive when app is closed
 
 ## Backlog
 - [ ] Onboarding — guided first-run flow (gateway URL, token, pairing walkthrough)
