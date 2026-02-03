@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/gateway_config.dart';
+import '../services/discovery_service.dart';
 import 'qr_scan_screen.dart';
 
 /// Settings screen for gateway connection configuration.
@@ -61,6 +63,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return 'Enter a valid URL (e.g. ws://192.168.1.100:18789)';
     }
     return null;
+  }
+
+  Future<void> _discoverGateway() async {
+    final result = await showDialog<DiscoveredGateway>(
+      context: context,
+      builder: (ctx) => const _DiscoveryDialog(),
+    );
+    if (result != null && mounted) {
+      _urlController.text = result.wsUrl;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Found gateway: ${result.wsUrl}'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   Future<void> _scanQrCode() async {
@@ -147,6 +165,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onPressed: _scanQrCode,
                   icon: const Icon(Icons.qr_code_scanner),
                   label: const Text('Scan QR'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _discoverGateway,
+                  icon: const Icon(Icons.wifi_find),
+                  label: const Text('Discover'),
                 ),
               ),
             ],
@@ -253,6 +279,136 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Dialog that shows mDNS + subnet scan results as they arrive.
+class _DiscoveryDialog extends StatefulWidget {
+  const _DiscoveryDialog();
+
+  @override
+  State<_DiscoveryDialog> createState() => _DiscoveryDialogState();
+}
+
+class _DiscoveryDialogState extends State<_DiscoveryDialog> {
+  final List<DiscoveredGateway> _gateways = [];
+  bool _scanning = true;
+  StreamSubscription<DiscoveredGateway>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _startDiscovery();
+  }
+
+  void _startDiscovery() {
+    _gateways.clear();
+    _scanning = true;
+    _sub?.cancel();
+    _sub = DiscoveryService.discover().listen(
+      (gw) {
+        if (mounted) setState(() => _gateways.add(gw));
+      },
+      onDone: () {
+        if (mounted) setState(() => _scanning = false);
+      },
+      onError: (e) {
+        debugPrint('🔍 Discovery error: $e');
+        if (mounted) setState(() => _scanning = false);
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Row(
+        children: [
+          const Icon(Icons.wifi_find, size: 22),
+          const SizedBox(width: 8),
+          const Text('Discover Gateway'),
+          if (_scanning) ...[
+            const SizedBox(width: 12),
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ],
+        ],
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 300,
+        child: _gateways.isEmpty
+            ? Center(
+                child: _scanning
+                    ? const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(),
+                          SizedBox(height: 16),
+                          Text('Scanning network...'),
+                        ],
+                      )
+                    : const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.wifi_off, size: 48, color: Colors.grey),
+                          SizedBox(height: 8),
+                          Text('No gateways found',
+                              style: TextStyle(color: Colors.grey)),
+                          SizedBox(height: 4),
+                          Text(
+                            'Make sure gateway is running\non the same network',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: Colors.grey, fontSize: 12),
+                          ),
+                        ],
+                      ),
+              )
+            : ListView.builder(
+                shrinkWrap: true,
+                itemCount: _gateways.length,
+                itemBuilder: (context, index) {
+                  final gw = _gateways[index];
+                  return ListTile(
+                    leading: Icon(
+                      gw.source == 'mdns'
+                          ? Icons.dns
+                          : Icons.lan,
+                      color: gw.source == 'mdns'
+                          ? Colors.green
+                          : Colors.orange,
+                    ),
+                    title: Text(gw.name ?? gw.host),
+                    subtitle: Text(
+                      '${gw.wsUrl}  •  ${gw.source == 'mdns' ? 'mDNS' : 'Port scan'}',
+                    ),
+                    onTap: () => Navigator.of(context).pop(gw),
+                  );
+                },
+              ),
+      ),
+      actions: [
+        if (!_scanning)
+          TextButton(
+            onPressed: () => setState(() => _startDiscovery()),
+            child: const Text('Retry'),
+          ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+      ],
     );
   }
 }
