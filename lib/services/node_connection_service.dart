@@ -48,12 +48,20 @@ class NodeConnectionService extends ChangeNotifier {
     _handlers[command] = handler;
   }
 
+  bool _connecting = false;
+
   /// Connect as node role.
   Future<void> connect(GatewayConfig config) async {
+    if (_connecting) {
+      debugPrint('⚠️ [Node] connect() already in progress, skipping');
+      return;
+    }
+    _connecting = true;
     _config = config;
     _reconnectTimer?.cancel();
 
-    if (_connected) await disconnect();
+    // Always close old channel — even if handshake never completed
+    await _closeChannel();
 
     // Try local first, then fallback (same as operator connection)
     final localWs = config.wsUrl;
@@ -61,6 +69,7 @@ class NodeConnectionService extends ChangeNotifier {
 
     if (await _tryConnect(localWs, config.localTimeoutMs)) {
       _activeUrl = config.url;
+      _connecting = false;
       return;
     }
 
@@ -69,11 +78,13 @@ class NodeConnectionService extends ChangeNotifier {
       debugPrint('🔌 [Node] Trying fallback: $fallbackWs');
       if (await _tryConnect(fallbackWs, 10000)) {
         _activeUrl = config.fallbackUrl;
+        _connecting = false;
         return;
       }
     }
 
     debugPrint('❌ [Node] All connection attempts failed');
+    _connecting = false;
     _scheduleReconnect();
   }
 
@@ -90,7 +101,13 @@ class NodeConnectionService extends ChangeNotifier {
       );
 
       _channel = channel;
-      _channel!.stream.listen(_onMessage, onDone: _onDone, onError: _onError);
+      // Capture reference for zombie detection in callbacks
+      final thisChannel = channel;
+      _channel!.stream.listen(
+        _onMessage,
+        onDone: () => _onDone(thisChannel),
+        onError: (e) => _onError(e, thisChannel),
+      );
       return true;
     } catch (e) {
       debugPrint('❌ [Node] Connect error: $e');
@@ -98,14 +115,23 @@ class NodeConnectionService extends ChangeNotifier {
     }
   }
 
-  Future<void> disconnect() async {
-    _reconnectTimer?.cancel();
-    _pairingRetryTimer?.cancel();
-    await _channel?.sink.close();
+  /// Close the underlying WebSocket without cancelling reconnect timers.
+  Future<void> _closeChannel() async {
+    final old = _channel;
     _channel = null;
     _connected = false;
-    _pairingPending = false;
     _activeUrl = null;
+    try {
+      await old?.sink.close();
+    } catch (_) {}
+  }
+
+  Future<void> disconnect() async {
+    _connecting = false;
+    _reconnectTimer?.cancel();
+    _pairingRetryTimer?.cancel();
+    await _closeChannel();
+    _pairingPending = false;
     notifyListeners();
   }
 
@@ -324,7 +350,12 @@ class NodeConnectionService extends ChangeNotifier {
     debugPrint('📤 [Node] Sent event: $event');
   }
 
-  void _onDone() {
+  void _onDone(WebSocketChannel caller) {
+    // Ignore callbacks from zombie (replaced) channels
+    if (caller != _channel) {
+      debugPrint('👻 [Node] Ignoring _onDone from zombie channel');
+      return;
+    }
     debugPrint('🔌 [Node] WebSocket closed');
     _connected = false;
     _activeUrl = null;
@@ -332,7 +363,11 @@ class NodeConnectionService extends ChangeNotifier {
     _scheduleReconnect();
   }
 
-  void _onError(dynamic error) {
+  void _onError(dynamic error, WebSocketChannel caller) {
+    if (caller != _channel) {
+      debugPrint('👻 [Node] Ignoring _onError from zombie channel');
+      return;
+    }
     debugPrint('❌ [Node] WebSocket error: $error');
     _connected = false;
     notifyListeners();

@@ -35,16 +35,21 @@ class GatewayService extends ChangeNotifier {
   bool get isConnected => _state == msg.GatewayConnectionState.connected;
   List<msg.GatewayMessage> get messages => List.unmodifiable(_messages);
 
+  bool _connecting = false;
+
   /// Connect to the gateway with smart URL fallback.
   /// Tries local URL first (fast timeout), falls back to Tailscale.
   Future<void> connect(GatewayConfig config) async {
+    if (_connecting) {
+      debugPrint('⚠️ connect() already in progress, skipping');
+      return;
+    }
+    _connecting = true;
     _config = config;
     _reconnectTimer?.cancel();
 
-    if (_state == msg.GatewayConnectionState.connecting ||
-        _state == msg.GatewayConnectionState.connected) {
-      await disconnect();
-    }
+    // Always close old channel to prevent zombies
+    await _closeChannel();
 
     _setState(msg.GatewayConnectionState.connecting);
     _errorMessage = null;
@@ -55,6 +60,7 @@ class GatewayService extends ChangeNotifier {
 
     if (await _tryConnect(localWs, config.localTimeoutMs)) {
       _activeUrl = config.url;
+      _connecting = false;
       debugPrint('✅ Connected via local URL');
       return;
     }
@@ -67,6 +73,7 @@ class GatewayService extends ChangeNotifier {
 
       if (await _tryConnect(fallbackWs, 10000)) {
         _activeUrl = config.fallbackUrl;
+        _connecting = false;
         debugPrint('✅ Connected via fallback URL');
         return;
       }
@@ -74,6 +81,7 @@ class GatewayService extends ChangeNotifier {
 
     // Both failed
     debugPrint('❌ All connection attempts failed');
+    _connecting = false;
     _setState(msg.GatewayConnectionState.error);
     _scheduleReconnect();
   }
@@ -98,10 +106,12 @@ class GatewayService extends ChangeNotifier {
       _channel = channel;
       _setState(msg.GatewayConnectionState.authenticating);
 
+      // Capture reference for zombie detection in callbacks
+      final thisChannel = channel;
       _channel!.stream.listen(
         _onMessage,
-        onDone: _onDone,
-        onError: _onError,
+        onDone: () => _onDone(thisChannel),
+        onError: (e) => _onError(e, thisChannel),
       );
 
       return true;
@@ -120,12 +130,21 @@ class GatewayService extends ChangeNotifier {
     }
   }
 
-  /// Disconnect from the gateway.
-  Future<void> disconnect() async {
-    _reconnectTimer?.cancel();
-    await _channel?.sink.close();
+  /// Close the underlying WebSocket without cancelling timers.
+  Future<void> _closeChannel() async {
+    final old = _channel;
     _channel = null;
     _activeUrl = null;
+    try {
+      await old?.sink.close();
+    } catch (_) {}
+  }
+
+  /// Disconnect from the gateway.
+  Future<void> disconnect() async {
+    _connecting = false;
+    _reconnectTimer?.cancel();
+    await _closeChannel();
     _setState(msg.GatewayConnectionState.disconnected);
   }
 
@@ -286,14 +305,22 @@ class GatewayService extends ChangeNotifier {
     }
   }
 
-  void _onDone() {
+  void _onDone(WebSocketChannel caller) {
+    if (caller != _channel) {
+      debugPrint('👻 Ignoring _onDone from zombie channel');
+      return;
+    }
     debugPrint('🔌 WebSocket closed');
     _activeUrl = null;
     _setState(msg.GatewayConnectionState.disconnected);
     _scheduleReconnect();
   }
 
-  void _onError(dynamic error) {
+  void _onError(dynamic error, WebSocketChannel caller) {
+    if (caller != _channel) {
+      debugPrint('👻 Ignoring _onError from zombie channel');
+      return;
+    }
     debugPrint('❌ WebSocket error: $error');
     _errorMessage = error.toString();
     _activeUrl = null;
