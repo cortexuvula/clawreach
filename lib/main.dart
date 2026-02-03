@@ -47,9 +47,10 @@ void main() async {
 
   // Wire network monitor to trigger reconnects on network change
   networkMonitor.onNetworkReconnect = () {
-    if (!gateway.isConnected) {
+    final config = gateway.activeConfig;
+    if (!gateway.isConnected && config != null) {
       debugPrint('📶 Network reconnect → gateway');
-      gateway.connect(gateway.activeConfig!);
+      gateway.connect(config);
     }
   };
   await networkMonitor.init();

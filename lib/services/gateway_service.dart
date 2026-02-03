@@ -52,42 +52,43 @@ class GatewayService extends ChangeNotifier {
     _config = config;
     _reconnectTimer?.cancel();
 
-    // Always close old channel to prevent zombies
-    await _closeChannel();
+    try {
+      // Always close old channel to prevent zombies
+      await _closeChannel();
 
-    _setState(msg.GatewayConnectionState.connecting);
-    _errorMessage = null;
+      _setState(msg.GatewayConnectionState.connecting);
+      _errorMessage = null;
 
-    // Try local URL first
-    final localWs = config.wsUrl;
-    debugPrint('🔌 Trying local: $localWs');
+      // Try local URL first
+      final localWs = config.wsUrl;
+      debugPrint('🔌 Trying local: $localWs');
 
-    if (await _tryConnect(localWs, config.localTimeoutMs)) {
-      _activeUrl = config.url;
-      _connecting = false;
-      debugPrint('✅ Connected via local URL');
-      return;
-    }
-
-    // Fall back to Tailscale if available
-    if (config.hasFallback) {
-      final fallbackWs = config.fallbackWsUrl!;
-      debugPrint('🔌 Local failed, trying fallback: $fallbackWs');
-      _errorMessage = null; // Clear local error
-
-      if (await _tryConnect(fallbackWs, 10000)) {
-        _activeUrl = config.fallbackUrl;
-        _connecting = false;
-        debugPrint('✅ Connected via fallback URL');
+      if (await _tryConnect(localWs, config.localTimeoutMs)) {
+        _activeUrl = config.url;
+        debugPrint('✅ Connected via local URL');
         return;
       }
-    }
 
-    // Both failed
-    debugPrint('❌ All connection attempts failed');
-    _connecting = false;
-    _setState(msg.GatewayConnectionState.error);
-    _scheduleReconnect();
+      // Fall back to Tailscale if available
+      if (config.hasFallback) {
+        final fallbackWs = config.fallbackWsUrl!;
+        debugPrint('🔌 Local failed, trying fallback: $fallbackWs');
+        _errorMessage = null; // Clear local error
+
+        if (await _tryConnect(fallbackWs, 10000)) {
+          _activeUrl = config.fallbackUrl;
+          debugPrint('✅ Connected via fallback URL');
+          return;
+        }
+      }
+
+      // Both failed
+      debugPrint('❌ All connection attempts failed');
+      _setState(msg.GatewayConnectionState.error);
+      _scheduleReconnect();
+    } finally {
+      _connecting = false;
+    }
   }
 
   /// Attempt WebSocket connection to a specific URL with timeout.
@@ -198,8 +199,11 @@ class GatewayService extends ChangeNotifier {
       // Forward events to listeners (ChatService etc.)
       onRawMessage?.call(json);
 
-      // Store in raw message feed
+      // Store in raw message feed (cap at 500 to prevent memory leak)
       _messages.add(msg.GatewayMessage.fromJson(json));
+      if (_messages.length > 500) {
+        _messages.removeRange(0, _messages.length - 500);
+      }
       notifyListeners();
     } catch (e) {
       debugPrint('❌ Message parse error: $e');

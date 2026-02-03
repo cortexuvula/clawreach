@@ -63,32 +63,33 @@ class NodeConnectionService extends ChangeNotifier {
     _config = config;
     _reconnectTimer?.cancel();
 
-    // Always close old channel — even if handshake never completed
-    await _closeChannel();
+    try {
+      // Always close old channel — even if handshake never completed
+      await _closeChannel();
 
-    // Try local first, then fallback (same as operator connection)
-    final localWs = config.wsUrl;
-    debugPrint('🔌 [Node] Trying local: $localWs');
+      // Try local first, then fallback (same as operator connection)
+      final localWs = config.wsUrl;
+      debugPrint('🔌 [Node] Trying local: $localWs');
 
-    if (await _tryConnect(localWs, config.localTimeoutMs)) {
-      _activeUrl = config.url;
-      _connecting = false;
-      return;
-    }
-
-    if (config.hasFallback) {
-      final fallbackWs = config.fallbackWsUrl!;
-      debugPrint('🔌 [Node] Trying fallback: $fallbackWs');
-      if (await _tryConnect(fallbackWs, 10000)) {
-        _activeUrl = config.fallbackUrl;
-        _connecting = false;
+      if (await _tryConnect(localWs, config.localTimeoutMs)) {
+        _activeUrl = config.url;
         return;
       }
-    }
 
-    debugPrint('❌ [Node] All connection attempts failed');
-    _connecting = false;
-    _scheduleReconnect();
+      if (config.hasFallback) {
+        final fallbackWs = config.fallbackWsUrl!;
+        debugPrint('🔌 [Node] Trying fallback: $fallbackWs');
+        if (await _tryConnect(fallbackWs, 10000)) {
+          _activeUrl = config.fallbackUrl;
+          return;
+        }
+      }
+
+      debugPrint('❌ [Node] All connection attempts failed');
+      _scheduleReconnect();
+    } finally {
+      _connecting = false;
+    }
   }
 
   Future<bool> _tryConnect(String wsUrl, int timeoutMs) async {
@@ -258,11 +259,15 @@ class NodeConnectionService extends ChangeNotifier {
   /// We just need to retry connecting periodically until it's approved.
   void _enterPairingPendingState() {
     if (_pairingPending && _pairingRetryTimer?.isActive == true) {
-      return; // Already in pairing-pending state
+      return; // Already in pairing-pending state with active timer
     }
 
+    final wasAlreadyPending = _pairingPending;
     _pairingPending = true;
-    _pairingRetryCount = 0;
+    // Only reset count on first entry — NOT on re-entry, or backoff never works
+    if (!wasAlreadyPending) {
+      _pairingRetryCount = 0;
+    }
     notifyListeners();
 
     debugPrint('🔗 [Node] Pairing pending — gateway has our request. '
