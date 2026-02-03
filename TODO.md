@@ -8,11 +8,11 @@
 - [ ] Test canvas.hide / canvas.eval / canvas.snapshot / canvas.a2ui.reset
 
 ## Connection & Pairing Improvements
-- [ ] **QR code pairing** — gateway web UI shows QR with `clawreach://connect?url=...&token=...`, scan to configure
-- [ ] **mDNS/Bonjour discovery** — scan LAN for `_openclaw._tcp` service, auto-find gateway IP
-- [ ] **Deep link pairing** — `clawreach://connect?...` URI scheme, can be sent via Signal/message
+- [x] **Deep link pairing** — `clawreach://connect?url=...&token=...&fallback=...&name=...` URI scheme
+- [x] **QR code pairing** — scan JSON or deep link format QR codes to auto-configure
+- [x] **mDNS/Bonjour discovery** — scan LAN for `_openclaw._tcp` service + port scan fallback
+- [x] **Persistent connection service** — Android foreground service keeps node WebSocket alive
 - [ ] **Token-free LAN pairing** — auto-trust devices on same subnet with on-device confirmation prompt
-- [ ] **Persistent connection service** — Android foreground service to keep node connection alive when app is closed
 
 ## Backlog
 - [ ] Onboarding — guided first-run flow (gateway URL, token, pairing walkthrough)
