@@ -16,6 +16,7 @@ import '../services/capability_service.dart';
 import '../services/chat_service.dart';
 import '../services/gateway_service.dart';
 import '../services/hike_service.dart';
+import '../services/deep_link_service.dart';
 import '../services/node_connection_service.dart';
 import '../widgets/canvas_overlay.dart';
 import '../widgets/chat_bubble.dart';
@@ -37,6 +38,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final _focusNode = FocusNode();
   int _prevMessageCount = 0;
 
+  // Deep link service
+  final DeepLinkService _deepLinkService = DeepLinkService();
+
   // Media state
   final AudioRecorder _recorder = AudioRecorder();
   final ImagePicker _imagePicker = ImagePicker();
@@ -50,6 +54,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadConfigAndAutoConnect();
+    _initDeepLinks();
     _focusNode.addListener(_onFocusChange);
     _textController.addListener(_onTextChanged);
   }
@@ -57,6 +62,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _deepLinkService.dispose();
     _recordingTimer?.cancel();
     _focusNode.removeListener(_onFocusChange);
     _focusNode.dispose();
@@ -116,6 +122,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         );
       }
     });
+  }
+
+  Future<void> _initDeepLinks() async {
+    _deepLinkService.onConfigReceived = _onDeepLinkConfig;
+    await _deepLinkService.init();
+  }
+
+  Future<void> _onDeepLinkConfig(GatewayConfig config) async {
+    // Save config to SharedPreferences and auto-connect
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('gateway_config', jsonEncode(config.toJson()));
+    setState(() => _config = config);
+    _connectSequential(config);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Connected via link: ${config.url}'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   Future<void> _loadConfigAndAutoConnect() async {

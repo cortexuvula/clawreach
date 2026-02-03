@@ -50,6 +50,7 @@ dependencies:
   http: ^1.2.2
   record: ^5.1.2
   image_picker: ^1.1.2
+  app_links: ^6.3.3
 
 dependency_overrides:
   record_linux: ^1.3.0
