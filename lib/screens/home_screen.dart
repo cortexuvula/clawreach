@@ -30,7 +30,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   GatewayConfig? _config;
   final _textController = TextEditingController();
   final _scrollController = ScrollController();
@@ -48,6 +48,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadConfigAndAutoConnect();
     _focusNode.addListener(_onFocusChange);
     _textController.addListener(_onTextChanged);
@@ -55,6 +56,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _recordingTimer?.cancel();
     _focusNode.removeListener(_onFocusChange);
     _focusNode.dispose();
@@ -63,6 +65,28 @@ class _HomeScreenState extends State<HomeScreen> {
     _scrollController.dispose();
     _recorder.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final gateway = context.read<GatewayService>();
+    final nodeConn = context.read<NodeConnectionService>();
+
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+        debugPrint('💤 App backgrounded — pausing connections');
+        gateway.setBackgrounded(true);
+        nodeConn.setBackgrounded(true);
+        break;
+      case AppLifecycleState.resumed:
+        debugPrint('☀️ App foregrounded — resuming connections');
+        gateway.setBackgrounded(false);
+        nodeConn.setBackgrounded(false);
+        break;
+      default:
+        break;
+    }
   }
 
   void _onTextChanged() {

@@ -31,7 +31,10 @@ class NodeConnectionService extends ChangeNotifier {
   bool _pairingPending = false;
   Timer? _pairingRetryTimer;
   int _pairingRetryCount = 0;
+  int _reconnectAttempts = 0;
+  bool _backgrounded = false;
   static const _maxPairingRetries = 60; // 5 min at 5s intervals
+  static const _maxBackoffMs = 60000; // Cap at 60s
 
   /// Register command handlers here.
   final Map<String, InvokeHandler> _handlers = {};
@@ -158,6 +161,7 @@ class NodeConnectionService extends ChangeNotifier {
             _connected = true;
             _pairingPending = false;
             _pairingRetryCount = 0;
+            _reconnectAttempts = 0; // Reset backoff on success
             _pairingRetryTimer?.cancel();
             debugPrint('✅ [Node] Connected as node');
             notifyListeners();
@@ -265,24 +269,36 @@ class NodeConnectionService extends ChangeNotifier {
         'Retrying connect every 5s until approved...');
 
     _pairingRetryTimer?.cancel();
-    _pairingRetryTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-      _pairingRetryCount++;
-      if (_pairingRetryCount > _maxPairingRetries) {
-        debugPrint('❌ [Node] Pairing timed out after $_maxPairingRetries retries');
-        timer.cancel();
-        _pairingPending = false;
-        notifyListeners();
-        return;
-      }
+    _schedulePairingRetry();
+  }
 
-      if (_connected) {
-        timer.cancel();
-        return;
-      }
+  /// Schedule a single pairing retry with increasing backoff.
+  /// 5s → 10s → 20s → 30s (cap) — much gentler than fixed 5s.
+  void _schedulePairingRetry() {
+    if (_connected || !_pairingPending || _backgrounded) return;
 
-      debugPrint('🔗 [Node] Pairing retry $_pairingRetryCount/$_maxPairingRetries...');
+    _pairingRetryCount++;
+    if (_pairingRetryCount > _maxPairingRetries) {
+      debugPrint('❌ [Node] Pairing timed out after $_maxPairingRetries retries');
+      _pairingPending = false;
+      notifyListeners();
+      return;
+    }
+
+    // Backoff: 5s → 10s → 20s → 30s cap
+    final delay = (5000 * (1 << (_pairingRetryCount - 1).clamp(0, 2)))
+        .clamp(5000, 30000);
+    debugPrint('🔗 [Node] Pairing retry $_pairingRetryCount/$_maxPairingRetries in ${delay}ms...');
+
+    _pairingRetryTimer = Timer(Duration(milliseconds: delay), () {
+      if (_connected || !_pairingPending) return;
       if (_config != null) {
-        connect(_config!);
+        connect(_config!).then((_) {
+          // If still pending after connect attempt, schedule next retry
+          if (_pairingPending && !_connected) {
+            _schedulePairingRetry();
+          }
+        });
       }
     });
   }
@@ -374,10 +390,33 @@ class NodeConnectionService extends ChangeNotifier {
     _scheduleReconnect();
   }
 
+  /// Notify the service that the app moved to background/foreground.
+  void setBackgrounded(bool bg) {
+    _backgrounded = bg;
+    if (!bg && !_connected && _config != null) {
+      _reconnectAttempts = 0;
+      debugPrint('🔄 [Node] App foregrounded — reconnecting now');
+      connect(_config!);
+    } else if (bg) {
+      _reconnectTimer?.cancel();
+      _pairingRetryTimer?.cancel();
+      debugPrint('💤 [Node] App backgrounded — pausing reconnects');
+    }
+  }
+
   void _scheduleReconnect() {
     if (_config?.autoReconnect != true) return;
+    if (_backgrounded) {
+      debugPrint('💤 [Node] Backgrounded — skipping reconnect');
+      return;
+    }
+    _reconnectAttempts++;
+    // Exponential backoff: 5s → 10s → 20s → 40s → 60s (cap)
+    final backoff = (5000 * (1 << (_reconnectAttempts - 1).clamp(0, 4)))
+        .clamp(5000, _maxBackoffMs);
+    debugPrint('🔄 [Node] Reconnecting in ${backoff}ms (attempt $_reconnectAttempts)...');
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 5), () {
+    _reconnectTimer = Timer(Duration(milliseconds: backoff), () {
       if (_config != null) connect(_config!);
     });
   }

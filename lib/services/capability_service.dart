@@ -26,10 +26,17 @@ class CapabilityService extends ChangeNotifier {
   int get imageQuality => _hasLargePayload ? 80 : 50;
 
   /// Probe server capabilities. Call after gateway connects.
-  Future<void> probe(String gatewayUrl) async {
+  /// Skips re-probing if already probed for the same host (saves battery).
+  Future<void> probe(String gatewayUrl, {bool force = false}) async {
     try {
       final uri = Uri.parse(gatewayUrl);
-      _gatewayHost = uri.host;
+      final newHost = uri.host;
+      // Skip if already probed for same host (reconnect scenario)
+      if (_probed && !force && newHost == _gatewayHost) {
+        debugPrint('🔍 Capabilities: cached for $_gatewayHost (skip re-probe)');
+        return;
+      }
+      _gatewayHost = newHost;
     } catch (_) {
       _gatewayHost = null;
     }

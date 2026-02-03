@@ -23,6 +23,9 @@ class GatewayService extends ChangeNotifier {
   Timer? _reconnectTimer;
   GatewayConfig? _config;
   String? _nonce;
+  int _reconnectAttempts = 0;
+  bool _backgrounded = false;
+  static const _maxBackoffMs = 60000; // Cap at 60s
 
   /// Callback for raw messages (used by ChatService).
   void Function(Map<String, dynamic>)? onRawMessage;
@@ -284,6 +287,7 @@ class GatewayService extends ChangeNotifier {
     final snapshot = payload?['snapshot'] as Map<String, dynamic>?;
     final sessionDefaults = snapshot?['sessionDefaults'] as Map<String, dynamic>?;
     _mainSessionKey = sessionDefaults?['mainSessionKey'] as String?;
+    _reconnectAttempts = 0; // Reset backoff on success
     debugPrint('✅ Connected to gateway via ${_activeUrl ?? "unknown"}! session=$_mainSessionKey');
     _setState(msg.GatewayConnectionState.connected);
   }
@@ -328,12 +332,35 @@ class GatewayService extends ChangeNotifier {
     _scheduleReconnect();
   }
 
+  /// Notify the service that the app moved to background/foreground.
+  void setBackgrounded(bool bg) {
+    _backgrounded = bg;
+    if (!bg && !isConnected && _config != null) {
+      // Returning to foreground — reconnect immediately
+      _reconnectAttempts = 0;
+      debugPrint('🔄 App foregrounded — reconnecting now');
+      connect(_config!);
+    } else if (bg) {
+      // Going to background — cancel pending reconnects to save battery
+      _reconnectTimer?.cancel();
+      debugPrint('💤 App backgrounded — pausing reconnects');
+    }
+  }
+
   void _scheduleReconnect({int? delayMs}) {
     if (_config?.autoReconnect != true) return;
-    final delay = delayMs ?? _config?.reconnectDelayMs ?? 5000;
-    debugPrint('🔄 Reconnecting in ${delay}ms...');
+    if (_backgrounded) {
+      debugPrint('💤 Backgrounded — skipping reconnect');
+      return;
+    }
+    _reconnectAttempts++;
+    // Exponential backoff: 5s → 10s → 20s → 40s → 60s (cap)
+    final baseDelay = delayMs ?? _config?.reconnectDelayMs ?? 5000;
+    final backoff = (baseDelay * (1 << (_reconnectAttempts - 1).clamp(0, 4)))
+        .clamp(baseDelay, _maxBackoffMs);
+    debugPrint('🔄 Reconnecting in ${backoff}ms (attempt $_reconnectAttempts)...');
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(Duration(milliseconds: delay), () {
+    _reconnectTimer = Timer(Duration(milliseconds: backoff), () {
       if (_config != null) connect(_config!);
     });
   }
