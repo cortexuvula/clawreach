@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/gateway_config.dart';
+import 'qr_scan_screen.dart';
 
 /// Settings screen for gateway connection configuration.
 class SettingsScreen extends StatefulWidget {
@@ -62,6 +63,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return null;
   }
 
+  Future<void> _scanQrCode() async {
+    final config = await Navigator.push<GatewayConfig>(
+      context,
+      MaterialPageRoute(builder: (_) => const QrScanScreen()),
+    );
+    if (config != null && mounted) {
+      _urlController.text = config.url;
+      _fallbackUrlController.text = config.fallbackUrl ?? '';
+      _tokenController.text = config.token;
+      _nameController.text = config.nodeName;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('QR code scanned — review settings and tap Save'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
   Future<void> _save() async {
     final url = _urlController.text.trim();
     final token = _tokenController.text.trim();
@@ -119,6 +139,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // Quick setup buttons
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _scanQrCode,
+                  icon: const Icon(Icons.qr_code_scanner),
+                  label: const Text('Scan QR'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
           // Local URL
           const Text('Local URL (WiFi)',
               style: TextStyle(fontWeight: FontWeight.w600)),
