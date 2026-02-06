@@ -12,11 +12,22 @@ class CachedTileProvider extends TileProvider {
   static String? _cacheDirPath;
 
   /// Initialize the cache directory (call once at startup).
+  /// On web, caching is disabled (tiles load from network each time).
   static Future<void> init() async {
-    final dir = await getApplicationCacheDirectory();
-    _cacheDirPath = '${dir.path}/map_tiles';
-    await Directory(_cacheDirPath!).create(recursive: true);
-    debugPrint('🗺️ Tile cache: $_cacheDirPath');
+    if (kIsWeb) {
+      debugPrint('🗺️ Tile cache: disabled (web platform)');
+      return;
+    }
+
+    try {
+      final dir = await getApplicationCacheDirectory();
+      _cacheDirPath = '${dir.path}/map_tiles';
+      await Directory(_cacheDirPath!).create(recursive: true);
+      debugPrint('🗺️ Tile cache: $_cacheDirPath');
+    } catch (e) {
+      debugPrint('🗺️ Tile cache init failed (cache disabled): $e');
+      _cacheDirPath = null;
+    }
   }
 
   @override
@@ -53,19 +64,23 @@ class CachedTileImage extends ImageProvider<CachedTileImage> {
   }
 
   Future<ui.Codec> _loadTile(CachedTileImage key, ImageDecoderCallback decode) async {
-    final cacheFile = _getCacheFile(key.url);
+    // Skip cache on web or if cache init failed
+    File? cacheFile;
+    if (!kIsWeb && cacheDir != null) {
+      cacheFile = _getCacheFile(key.url);
 
-    // Try cache first
-    if (cacheFile != null && await cacheFile.exists()) {
-      try {
-        final bytes = await cacheFile.readAsBytes();
-        if (bytes.isNotEmpty) {
-          final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
-          return decode(buffer);
+      // Try cache first
+      if (cacheFile != null && await cacheFile.exists()) {
+        try {
+          final bytes = await cacheFile.readAsBytes();
+          if (bytes.isNotEmpty) {
+            final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+            return decode(buffer);
+          }
+        } catch (e) {
+          debugPrint('🗺️ Cache read error for ${key.url}: $e');
+          // Cache corrupt, fall through to network
         }
-      } catch (e) {
-        debugPrint('🗺️ Cache read error for ${key.url}: $e');
-        // Cache corrupt, fall through to network
       }
     }
 
@@ -79,10 +94,10 @@ class CachedTileImage extends ImageProvider<CachedTileImage> {
         ).timeout(const Duration(seconds: 15));
 
         if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
-          // Save to cache (fire-and-forget)
-          if (cacheFile != null) {
+          // Save to cache (fire-and-forget) — only on mobile/desktop
+          if (!kIsWeb && cacheFile != null) {
             cacheFile.parent.create(recursive: true).then((_) {
-              cacheFile.writeAsBytes(response.bodyBytes);
+              cacheFile!.writeAsBytes(response.bodyBytes);
             }).catchError((_) {});
           }
 

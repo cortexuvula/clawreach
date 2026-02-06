@@ -143,6 +143,33 @@ class HikeTrack {
       ? 0
       : waypoints.map((w) => w.altitude).reduce(max);
 
+  /// Create a copy with updated fields.
+  HikeTrack copyWith({
+    String? id,
+    String? name,
+    FitnessActivity? activityType,
+    DateTime? startTime,
+    DateTime? endTime,
+    List<HikeWaypoint>? waypoints,
+    String? gpxPath,
+    Duration? duration,
+  }) {
+    final track = HikeTrack(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      activityType: activityType ?? this.activityType,
+      startTime: startTime ?? this.startTime,
+      endTime: endTime ?? this.endTime,
+      waypoints: waypoints ?? this.waypoints,
+      gpxPath: gpxPath ?? this.gpxPath,
+    );
+    // If duration is provided but endTime isn't, calculate endTime
+    if (duration != null && endTime == null) {
+      track.endTime = track.startTime.add(duration);
+    }
+    return track;
+  }
+
   /// Haversine distance between two lat/lon points in meters.
   static double haversineDistance(double lat1, double lon1, double lat2, double lon2) =>
       _haversine(lat1, lon1, lat2, lon2);

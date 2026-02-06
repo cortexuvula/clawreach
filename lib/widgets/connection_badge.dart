@@ -50,6 +50,11 @@ class ConnectionBadge extends StatelessWidget {
           Icons.lock_open,
           'Authenticating...'
         ),
+      msg.GatewayConnectionState.pairingPending => (
+          Colors.blue,
+          Icons.phonelink_lock,
+          'Pairing...'
+        ),
       msg.GatewayConnectionState.connected => (
           Colors.green,
           Icons.cloud_done,

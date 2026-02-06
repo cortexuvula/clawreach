@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/hike_track.dart';
 import 'node_connection_service.dart';
@@ -48,111 +49,135 @@ class HikeService extends ChangeNotifier {
     final permission = await _ensurePermission();
     if (!permission) return false;
 
-    // Create track
-    final now = DateTime.now();
-    final trackName = name ?? '${type.label} ${now.month}/${now.day} ${now.hour}:${now.minute.toString().padLeft(2, '0')}';
+    // Initialize track
     _activeTrack = HikeTrack(
       id: _uuid.v4(),
-      name: trackName,
+      name: name ?? 'Activity ${DateTime.now().toString().substring(0, 16)}',
       activityType: type,
-      startTime: now,
+      startTime: DateTime.now(),
+      waypoints: [],
     );
-
-    // Start GPS stream
     _tracking = true;
     notifyListeners();
 
-    // Grab initial position immediately (don't wait for movement)
-    try {
-      final initialPos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-      ).timeout(const Duration(seconds: 10));
-      _onPosition(initialPos);
-      debugPrint('📍 Initial position: ${initialPos.latitude}, ${initialPos.longitude} (±${initialPos.accuracy.toStringAsFixed(0)}m)');
-    } catch (e) {
-      debugPrint('⚠️ Could not get initial position: $e');
-    }
+    // Start position stream
+    _startPositionStream();
 
-    final locationSettings = AndroidSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 0, // fire every interval regardless of movement
-      intervalDuration: const Duration(seconds: 10),
-      foregroundNotificationConfig: ForegroundNotificationConfig(
-        notificationTitle: 'ClawReach — Tracking ${type.label}',
-        notificationText: 'GPS logging active',
-        notificationChannelName: 'Hike Tracking',
-        enableWakeLock: true,
-        setOngoing: true,
-      ),
-    );
-
-    _positionSub = Geolocator.getPositionStream(
-      locationSettings: locationSettings,
-    ).listen(
-      _onPosition,
-      onError: (e) {
-        debugPrint('❌ GPS error: $e');
-        _error = 'GPS error: $e';
-        notifyListeners();
-      },
-    );
-
-    // Also log position on a timer as fallback (in case distance filter blocks updates when standing still)
-    _fallbackTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
-      if (!_tracking) return;
-      try {
-        final pos = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-        ).timeout(const Duration(seconds: 5));
-        _onPosition(pos);
-      } catch (_) {}
-    });
-
-    // Update UI timer (for duration display)
+    // Start duration timer (updates UI every second)
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      notifyListeners();
+      notifyListeners(); // Duration is computed, no need to update track
     });
 
-    // Save initial state
-    await _saveTrack();
-    debugPrint('🥾 Hike tracking started: ${_activeTrack!.name}');
+    // Fallback timer: auto-stop if no GPS fix for 5 minutes
+    _fallbackTimer = Timer(const Duration(minutes: 5), () {
+      if (_activeTrack!.waypoints.isEmpty) {
+        debugPrint('⏱️ Auto-stopping track (no GPS fix after 5 min)');
+        stopTracking();
+      }
+    });
+
+    debugPrint('🎯 Tracking started: ${_activeTrack!.name}');
     return true;
   }
 
-  /// Stop tracking, save, and auto-export GPX.
+  void _startPositionStream() {
+    const settings = LocationSettings(
+      accuracy: LocationAccuracy.best,
+      distanceFilter: 5, // Update every 5 meters
+    );
+
+    _positionSub = Geolocator.getPositionStream(locationSettings: settings).listen(
+      (position) {
+        _lastPosition = position;
+        if (_tracking && _activeTrack != null) {
+          // Cancel fallback timer once we get GPS
+          _fallbackTimer?.cancel();
+          _fallbackTimer = null;
+
+          // Convert Position to HikeWaypoint
+          final waypoint = HikeWaypoint(
+            latitude: position.latitude,
+            longitude: position.longitude,
+            altitude: position.altitude,
+            speed: position.speed,
+            heading: position.heading,
+            accuracy: position.accuracy,
+            timestamp: DateTime.now(),
+          );
+
+          _activeTrack = _activeTrack!.copyWith(
+            waypoints: [..._activeTrack!.waypoints, waypoint],
+          );
+          _saveTrack(); // Auto-save
+          notifyListeners();
+        }
+      },
+      onError: (e) {
+        debugPrint('❌ GPS error: $e');
+        _error = 'GPS unavailable';
+        notifyListeners();
+      },
+    );
+  }
+
+  /// Pause tracking (keeps current track, stops GPS updates).
+  void pauseTracking() {
+    if (!_tracking) return;
+    _tracking = false;
+    _positionSub?.cancel();
+    _positionSub = null;
+    _durationTimer?.cancel();
+    _durationTimer = null;
+    _fallbackTimer?.cancel();
+    _fallbackTimer = null;
+    notifyListeners();
+    debugPrint('⏸️ Tracking paused');
+  }
+
+  /// Resume tracking after pause.
+  Future<void> resumeTracking() async {
+    if (_tracking || _activeTrack == null) return;
+    _tracking = true;
+    _startPositionStream();
+
+    _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      notifyListeners();
+    });
+    notifyListeners();
+    debugPrint('▶️ Tracking resumed');
+  }
+
+  /// Stop tracking and finalize the current track.
   Future<HikeTrack?> stopTracking() async {
     if (_activeTrack == null) return null;
 
     _tracking = false;
-    _activeTrack!.endTime = DateTime.now();
-
-    await _positionSub?.cancel();
+    _positionSub?.cancel();
     _positionSub = null;
     _durationTimer?.cancel();
     _durationTimer = null;
     _fallbackTimer?.cancel();
     _fallbackTimer = null;
 
-    // Auto-export GPX
-    if (_activeTrack!.waypoints.isNotEmpty) {
-      final gpxPath = await exportGpx(_activeTrack!);
-      _activeTrack!.gpxPath = gpxPath;
-    }
-
+    // Finalize with endTime
+    _activeTrack = _activeTrack!.copyWith(
+      endTime: DateTime.now(),
+    );
     await _saveTrack();
-    final track = _activeTrack!;
-    debugPrint('${track.activityType.emoji} Activity stopped: ${track.waypoints.length} waypoints, '
-        '${track.totalDistanceKm.toStringAsFixed(2)} km, GPX: ${track.gpxPath}');
 
-    // Sync summary to gateway so Fred can log it
-    _syncToGateway(track);
+    // Push summary to gateway
+    _syncToGateway(_activeTrack!);
 
+    final completedTrack = _activeTrack!;
+    debugPrint('🏁 Track saved: ${completedTrack.name} (${completedTrack.waypoints.length} points)');
+    _activeTrack = null;
     notifyListeners();
-    return track;
+    
+    return completedTrack;
   }
 
-  /// Discard active tracking without saving.
-  void discardTracking() {
+  /// Discard the current track without saving.
+  void discardTrack() {
     _tracking = false;
     _positionSub?.cancel();
     _positionSub = null;
@@ -162,125 +187,43 @@ class HikeService extends ChangeNotifier {
     _fallbackTimer = null;
     _activeTrack = null;
     notifyListeners();
+    debugPrint('🗑️ Track discarded');
   }
 
-  void _onPosition(Position pos) {
-    if (_activeTrack == null) return;
-
-    // Skip very inaccurate readings
-    if (pos.accuracy > 100) {
-      debugPrint('📍 Skipped inaccurate reading (${pos.accuracy.toStringAsFixed(0)}m)');
-      return;
-    }
-
-    _lastPosition = pos;
-
-    // Deduplicate: skip if < 1m from last logged point (saves storage)
-    if (_activeTrack!.waypoints.isNotEmpty) {
-      final last = _activeTrack!.waypoints.last;
-      final dist = HikeTrack.haversineDistance(
-        last.latitude, last.longitude, pos.latitude, pos.longitude,
-      );
-      if (dist < 1.0) {
-        // Still update UI with latest position but don't log
-        notifyListeners();
-        return;
-      }
-    }
-
-    final waypoint = HikeWaypoint(
-      latitude: pos.latitude,
-      longitude: pos.longitude,
-      altitude: pos.altitude,
-      speed: pos.speed,
-      heading: pos.heading,
-      accuracy: pos.accuracy,
-      timestamp: DateTime.now(),
-    );
-
-    _activeTrack!.waypoints.add(waypoint);
-
-    // Auto-save every 30 waypoints
-    if (_activeTrack!.waypoints.length % 30 == 0) {
-      _saveTrack();
-      debugPrint('📍 Auto-saved: ${_activeTrack!.waypoints.length} waypoints');
-    }
-
-    notifyListeners();
-  }
-
-  /// Whether background location has been granted.
-  bool _backgroundGranted = false;
-
-  /// Check if background permission is still needed (for UI prompts).
-  bool get needsBackgroundPermission => !_backgroundGranted;
-
-  Future<bool> _ensurePermission() async {
-    // Step 1: Check GPS is on
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      _error = 'Location services are disabled. Please enable GPS.';
-      notifyListeners();
-      return false;
-    }
-
-    // Step 2: Get foreground location permission
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        _error = 'Location permission denied';
-        notifyListeners();
-        return false;
-      }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      _error = 'Location permission permanently denied. Enable in Settings.';
-      notifyListeners();
-      return false;
-    }
-
-    // Step 3: Request background location (required for tracking with screen off)
-    final bgStatus = await ph.Permission.locationAlways.status;
-    if (!bgStatus.isGranted) {
-      // Request it — Android will show "Allow all the time" prompt
-      final result = await ph.Permission.locationAlways.request();
-      if (result.isGranted) {
-        _backgroundGranted = true;
-      } else {
-        // Still allow tracking but warn — it may stop when screen is off
-        _error = 'Background location not granted. Tracking may stop when screen is off. '
-            'Go to Settings → Apps → Claw Reach → Permissions → Location → Allow all the time';
-        _backgroundGranted = false;
-        notifyListeners();
-        // Don't return false — let them track anyway, just degraded
-      }
-    } else {
-      _backgroundGranted = true;
-    }
-
-    return true;
-  }
-
-  /// Save track to local storage.
   Future<void> _saveTrack() async {
     if (_activeTrack == null) return;
-    try {
-      final dir = await _hikesDir();
-      final file = File('${dir.path}/${_activeTrack!.id}.json');
-      await file.writeAsString(_activeTrack!.toJsonString());
-    } catch (e) {
-      debugPrint('❌ Failed to save track: $e');
+    
+    if (kIsWeb) {
+      // On web: save to SharedPreferences (in-memory only, lost on page reload)
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('active_track', _activeTrack!.toJsonString());
+      } catch (e) {
+        debugPrint('❌ Failed to save track (web): $e');
+      }
+    } else {
+      // On mobile/desktop: save to file
+      try {
+        final dir = await _hikesDir();
+        final file = File('${dir.path}/${_activeTrack!.id}.json');
+        await file.writeAsString(_activeTrack!.toJsonString());
+      } catch (e) {
+        debugPrint('❌ Failed to save track: $e');
+      }
     }
   }
 
   /// Export track as GPX file and return the file path.
   Future<String?> exportGpx(HikeTrack track) async {
+    if (kIsWeb) {
+      debugPrint('⚠️ GPX export not supported on web');
+      return null;
+    }
+
     try {
       final dir = await _hikesDir();
       final safeName = track.name.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_');
-      final file = File('${dir.path}/${safeName}.gpx');
+      final file = File('${dir.path}/$safeName.gpx');
       await file.writeAsString(track.toGpx());
       debugPrint('📁 GPX exported: ${file.path}');
       return file.path;
@@ -292,6 +235,11 @@ class HikeService extends ChangeNotifier {
 
   /// List saved hike tracks.
   Future<List<HikeTrack>> listTracks() async {
+    if (kIsWeb) {
+      // On web: tracks aren't persisted between sessions
+      return [];
+    }
+
     try {
       final dir = await _hikesDir();
       final files = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.json'));
@@ -310,6 +258,8 @@ class HikeService extends ChangeNotifier {
 
   /// Load a specific track by ID.
   Future<HikeTrack?> loadTrack(String id) async {
+    if (kIsWeb) return null;
+
     try {
       final dir = await _hikesDir();
       final file = File('${dir.path}/$id.json');
@@ -321,71 +271,113 @@ class HikeService extends ChangeNotifier {
   }
 
   Future<Directory> _hikesDir() async {
+    if (kIsWeb) {
+      throw UnsupportedError('File storage not available on web');
+    }
     final appDir = await getApplicationDocumentsDirectory();
     final dir = Directory('${appDir.path}/hikes');
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;
   }
 
-  /// Build summary payload for a track.
-  Map<String, dynamic> _buildSummary(HikeTrack track) {
-    final duration = track.duration;
-    return {
-      'type': 'fitness_activity_complete',
-      'activityType': track.activityType.name,
-      'activityLabel': track.activityType.label,
-      'name': track.name,
-      'startTime': track.startTime.toIso8601String(),
-      'endTime': track.endTime?.toIso8601String(),
-      'durationMinutes': duration.inMinutes,
-      'distanceKm': double.parse(track.totalDistanceKm.toStringAsFixed(3)),
-      'avgSpeedKmh': double.parse(track.avgSpeedKmh.toStringAsFixed(1)),
-      'elevationGainM': double.parse(track.elevationGain.toStringAsFixed(0)),
-      'elevationLossM': double.parse(track.elevationLoss.toStringAsFixed(0)),
-      'maxAltitudeM': double.parse(track.maxAltitude.toStringAsFixed(0)),
-      'waypointCount': track.waypoints.length,
-      'hasGpx': track.gpxPath != null,
-    };
+  /// Permission handling.
+  Future<bool> _ensurePermission() async {
+    if (kIsWeb) {
+      // Web uses browser geolocation API (handled by geolocator)
+      try {
+        final permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.denied) {
+          final requested = await Geolocator.requestPermission();
+          if (requested == LocationPermission.denied ||
+              requested == LocationPermission.deniedForever) {
+            _error = 'Location permission denied';
+            notifyListeners();
+            return false;
+          }
+        }
+        return true;
+      } catch (e) {
+        _error = 'Permission check failed: $e';
+        notifyListeners();
+        return false;
+      }
+    }
+
+    // Mobile/Desktop: use permission_handler
+    final status = await ph.Permission.locationWhenInUse.status;
+    if (!status.isGranted) {
+      final result = await ph.Permission.locationWhenInUse.request();
+      if (!result.isGranted) {
+        _error = 'Location permission denied';
+        notifyListeners();
+        return false;
+      }
+    }
+
+    // Check if location services are enabled
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      _error = 'Location services disabled';
+      notifyListeners();
+      return false;
+    }
+
+    return true;
   }
 
-  /// Send activity summary to gateway, or queue for later if offline.
-  void _syncToGateway(HikeTrack track) {
+  /// Push activity summary to gateway (if connected).
+  Future<void> _syncToGateway(HikeTrack track) async {
     final summary = _buildSummary(track);
 
     if (_nodeConnection != null && _nodeConnection!.isConnected) {
-      // Use agent.request event — gateway processes this and routes to agent
-      final message = _formatSummaryMessage(summary);
-      _nodeConnection!.sendNodeEvent('agent.request', {
-        'message': message,
-        'sessionKey': '', // empty = main session
-        'deliver': false,
-      });
-      debugPrint('📤 Activity summary synced to gateway via agent.request');
+      try {
+        _nodeConnection!.sendNodeEvent('fitness-activity', summary);
+        debugPrint('✅ Activity synced to gateway');
+      } catch (e) {
+        debugPrint('❌ Sync failed: $e');
+        await _queuePendingSync(summary);
+      }
     } else {
-      // Queue for later — save to pending sync file
-      _queuePendingSync(summary);
-      debugPrint('📦 Activity summary queued (offline) — will sync on reconnect');
+      await _queuePendingSync(summary);
     }
   }
 
-  /// Format activity summary as a readable message for the agent.
-  String _formatSummaryMessage(Map<String, dynamic> s) {
-    return '[Fitness Activity Complete]\n'
-        'Type: ${s['activityLabel']} ${s['activityType']}\n'
-        'Name: ${s['name']}\n'
-        'Duration: ${s['durationMinutes']} min\n'
-        'Distance: ${s['distanceKm']} km\n'
-        'Avg Speed: ${s['avgSpeedKmh']} km/h\n'
-        'Elevation: ↑${s['elevationGainM']}m ↓${s['elevationLossM']}m\n'
-        'Max Altitude: ${s['maxAltitudeM']}m\n'
-        'Waypoints: ${s['waypointCount']}\n'
-        'GPX: ${s['hasGpx'] ? 'saved locally' : 'none'}\n'
-        'Start: ${s['startTime']}\n'
-        'End: ${s['endTime']}';
+  Map<String, dynamic> _buildSummary(HikeTrack track) {
+    // Calculate max speed from waypoints
+    final maxSpeed = track.waypoints.isEmpty
+        ? 0.0
+        : track.waypoints.map((w) => w.speed).reduce((a, b) => a > b ? a : b);
+
+    // Calculate avg pace (min/km) from avg speed
+    final avgPace = track.avgSpeedKmh > 0
+        ? 60 / track.avgSpeedKmh
+        : 0.0;
+
+    return {
+      'id': track.id,
+      'name': track.name,
+      'activity': track.activityType.name,
+      'startTime': track.startTime.toIso8601String(),
+      'endTime': track.endTime?.toIso8601String(),
+      'duration': track.duration.inSeconds,
+      'distance': track.totalDistanceMeters,
+      'ascent': track.elevationGain,
+      'descent': track.elevationLoss,
+      'maxAltitude': track.maxAltitude,
+      'maxSpeed': maxSpeed,
+      'avgPace': avgPace,
+      'points': track.waypoints.length,
+    };
   }
 
   /// Save unsent summary to local queue file.
   Future<void> _queuePendingSync(Map<String, dynamic> summary) async {
+    if (kIsWeb) {
+      // On web: skip pending sync queue (no persistent storage)
+      debugPrint('⚠️ Sync queue not available on web');
+      return;
+    }
+
     try {
       final dir = await _hikesDir();
       final file = File('${dir.path}/_pending_sync.jsonl');
@@ -398,8 +390,9 @@ class HikeService extends ChangeNotifier {
     }
   }
 
-  /// Flush all pending syncs when connection is restored.
+  /// Flush pending syncs when connection is re-established.
   Future<void> _flushPendingSync() async {
+    if (kIsWeb) return;
     if (_nodeConnection == null || !_nodeConnection!.isConnected) return;
 
     try {
@@ -415,21 +408,19 @@ class HikeService extends ChangeNotifier {
         if (line.trim().isEmpty) continue;
         try {
           final summary = jsonDecode(line) as Map<String, dynamic>;
-          final message = _formatSummaryMessage(summary);
-          _nodeConnection!.sendNodeEvent('agent.request', {
-            'message': message,
-            'sessionKey': '',
-            'deliver': false,
-          });
+          _nodeConnection!.sendNodeEvent('fitness-activity', summary);
           sent++;
-        } catch (_) {}
+        } catch (e) {
+          debugPrint('❌ Failed to sync pending activity: $e');
+        }
       }
 
-      // Clear the queue
-      await file.delete();
-      debugPrint('📤 Flushed $sent pending activity syncs to gateway');
+      if (sent > 0) {
+        await file.delete();
+        debugPrint('✅ Flushed $sent pending activities');
+      }
     } catch (e) {
-      debugPrint('❌ Failed to flush pending syncs: $e');
+      debugPrint('❌ Pending sync flush failed: $e');
     }
   }
 
