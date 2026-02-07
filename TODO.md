@@ -5,6 +5,7 @@
 - [ ] **Single pairing for both roles** — node connection waits for operator pairing, reuses same approval (one pairing instead of two)
 - [ ] **Hot-reload pairing** — gateway watches devices.json for changes, picks up approvals without restart
 - [ ] Test full canvas round-trip (eval, snapshot, actions, events)
+- [ ] Test offline support (cache, queue, service worker, banner)
 
 ## Connection & Pairing Improvements
 - [x] **Deep link pairing** — `clawreach://connect?url=...&token=...&fallback=...&name=...` URI scheme
@@ -28,6 +29,7 @@
 - [x] Chat interface with streaming
 - [x] Camera (front/back snap)
 - [x] Push notifications (enhanced with canvas alerts, message alerts, service workers)
+- [x] Offline support (message cache, outbound queue, smart service worker, visual indicators)
 - [x] Location sharing
 - [x] Canvas/A2UI WebView integration + JS bridge
 - [x] Canvas postMessage bridge for web (bidirectional communication, eval/snapshot support)
