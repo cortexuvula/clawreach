@@ -7,7 +7,8 @@ import 'node_connection_service.dart';
 // Platform-specific imports
 import 'package:webview_flutter/webview_flutter.dart'
     if (dart.library.html) 'package:webview_flutter/webview_flutter.dart';
-import 'dart:html' as html show window, MessageEvent;
+import 'canvas_service_stub.dart'
+    if (dart.library.html) 'canvas_service_web.dart';
 
 /// Handles canvas.* commands from the gateway.
 /// Manages a WebView that renders the A2UI interface.
