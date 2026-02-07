@@ -421,7 +421,7 @@ class CanvasService extends ChangeNotifier {
 
     if (kIsWeb) {
       // On web, use postMessage to reset
-      html.window.postMessage({'type': 'openclaw-a2ui-reset'}, '*');
+      window.postMessage({'type': 'openclaw-a2ui-reset'}, '*');
     } else if (_webViewController != null) {
       await _webViewController!.runJavaScript('''
         (() => {
@@ -515,7 +515,7 @@ class CanvasService extends ChangeNotifier {
       try {
         // Parse the messages to send as structured data
         final messages = jsonDecode(messagesJson);
-        html.window.postMessage({
+        window.postMessage({
           'type': 'openclaw-a2ui-push',
           'messages': messages,
         }, '*');
