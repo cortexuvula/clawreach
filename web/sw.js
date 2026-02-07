@@ -1,23 +1,38 @@
 // ClawReach Service Worker
 // Handles push notifications and offline caching for web platform
 
-const CACHE_NAME = 'clawreach-v1';
-const urlsToCache = [
+const CACHE_NAME = 'clawreach-v2';
+const DATA_CACHE_NAME = 'clawreach-data-v1';
+
+// Core app shell (always cache)
+const APP_SHELL = [
   '/',
   '/index.html',
-  '/main.dart.js',
-  '/flutter.js',
   '/manifest.json',
 ];
 
-// Install event - cache resources
+// Runtime cache (cache on first fetch)
+const RUNTIME_CACHE = [
+  '/main.dart.js',
+  '/flutter.js',
+  '/flutter_service_worker.js',
+];
+
+// Network-first resources (API calls, dynamic content)
+const NETWORK_FIRST = [
+  '/api/',
+  '/ws/',
+  '/__openclaw__/',
+];
+
+// Install event - cache app shell
 self.addEventListener('install', (event) => {
   console.log('[SW] Installing service worker...');
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => {
-        console.log('[SW] Caching app shell');
-        return cache.addAll(urlsToCache).catch((err) => {
+        console.log('[SW] Caching app shell:', APP_SHELL);
+        return cache.addAll(APP_SHELL).catch((err) => {
           console.warn('[SW] Cache add failed (expected during dev):', err);
         });
       })
@@ -29,11 +44,13 @@ self.addEventListener('install', (event) => {
 // Activate event - clean up old caches
 self.addEventListener('activate', (event) => {
   console.log('[SW] Activating service worker...');
+  const currentCaches = [CACHE_NAME, DATA_CACHE_NAME];
+  
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
+          if (!currentCaches.includes(cacheName)) {
             console.log('[SW] Deleting old cache:', cacheName);
             return caches.delete(cacheName);
           }
@@ -45,43 +62,90 @@ self.addEventListener('activate', (event) => {
   return self.clients.claim();
 });
 
-// Fetch event - serve from cache, fallback to network
+// Fetch event - smart caching strategies
 self.addEventListener('fetch', (event) => {
-  event.respondWith(
-    caches.match(event.request)
-      .then((response) => {
-        // Cache hit - return cached response
-        if (response) {
-          return response;
-        }
+  const url = new URL(event.request.url);
+  
+  // Skip cross-origin requests
+  if (url.origin !== location.origin) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
 
-        // Clone the request
-        const fetchRequest = event.request.clone();
+  // Network-first for API/WebSocket requests
+  if (NETWORK_FIRST.some(pattern => url.pathname.startsWith(pattern))) {
+    event.respondWith(networkFirst(event.request));
+    return;
+  }
 
-        return fetch(fetchRequest).then((response) => {
-          // Check if valid response
-          if (!response || response.status !== 200 || response.type !== 'basic') {
-            return response;
-          }
-
-          // Clone the response
-          const responseToCache = response.clone();
-
-          // Cache the fetched response
-          caches.open(CACHE_NAME)
-            .then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
-
-          return response;
-        }).catch((err) => {
-          console.warn('[SW] Fetch failed:', err);
-          // Could return offline fallback page here
-          throw err;
-        });
-      })
-  );
+  // Cache-first for app shell and assets
+  event.respondWith(cacheFirst(event.request));
 });
+
+// Cache-first strategy (app shell, static assets)
+async function cacheFirst(request) {
+  try {
+    const cached = await caches.match(request);
+    if (cached) {
+      console.log('[SW] Cache hit:', request.url);
+      return cached;
+    }
+
+    console.log('[SW] Cache miss, fetching:', request.url);
+    const response = await fetch(request);
+    
+    if (response && response.status === 200 && response.type === 'basic') {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(request, response.clone());
+    }
+    
+    return response;
+  } catch (err) {
+    console.warn('[SW] Fetch failed:', err);
+    
+    // Try to return cached version as fallback
+    const cached = await caches.match(request);
+    if (cached) {
+      console.log('[SW] Returning stale cache (offline)');
+      return cached;
+    }
+    
+    // Return offline page
+    return new Response('Offline - ClawReach is not available', {
+      status: 503,
+      statusText: 'Service Unavailable',
+      headers: new Headers({
+        'Content-Type': 'text/plain'
+      })
+    });
+  }
+}
+
+// Network-first strategy (API, dynamic content)
+async function networkFirst(request) {
+  try {
+    const response = await fetch(request);
+    
+    // Cache successful responses
+    if (response && response.status === 200) {
+      const cache = await caches.open(DATA_CACHE_NAME);
+      cache.put(request, response.clone());
+    }
+    
+    return response;
+  } catch (err) {
+    console.warn('[SW] Network failed, trying cache:', err);
+    
+    // Fallback to cache
+    const cached = await caches.match(request);
+    if (cached) {
+      console.log('[SW] Returning cached data (offline)');
+      return cached;
+    }
+    
+    throw err;
+  }
+}
 
 // Push event - handle push notifications
 self.addEventListener('push', (event) => {

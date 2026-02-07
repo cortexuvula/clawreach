@@ -26,6 +26,7 @@ import '../services/node_connection_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/canvas_overlay.dart';
 import '../widgets/chat_bubble.dart';
+import '../widgets/offline_banner.dart';
 import 'hike_screen.dart';
 import 'settings_screen.dart';
 
@@ -1068,6 +1069,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ],
               ),
             ),
+
+          // Offline banner (shows when disconnected or has queued messages)
+          const OfflineBanner(),
 
           // Recording banner
           if (_isRecording) _buildRecordingBanner(),

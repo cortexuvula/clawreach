@@ -4,18 +4,30 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../models/chat_message.dart';
 import 'gateway_service.dart';
+import 'message_cache.dart';
+import 'message_queue.dart';
 
 /// Manages chat state and message flow through the gateway.
 class ChatService extends ChangeNotifier {
   final GatewayService _gateway;
+  final MessageQueue _messageQueue = MessageQueue();
   static const _uuid = Uuid();
   dynamic _notificationService; // NotificationService reference
 
   final List<ChatMessage> _messages = [];
   String? _activeRunId;
+  bool _cacheLoaded = false;
 
   ChatService(this._gateway) {
     _gateway.addListener(_onGatewayChanged);
+    _messageQueue.addListener(notifyListeners);
+    _initOfflineSupport();
+  }
+
+  Future<void> _initOfflineSupport() async {
+    await _messageQueue.init();
+    // Load cached messages on startup
+    await _loadCachedMessages();
   }
 
   /// Set notification service reference
@@ -27,6 +39,8 @@ class ChatService extends ChangeNotifier {
   bool get isReady => _gateway.isConnected && _gateway.mainSessionKey != null;
   bool get isStreaming => _activeRunId != null;
   String? get sessionKey => _gateway.mainSessionKey;
+  bool get hasQueuedMessages => _messageQueue.hasQueuedMessages;
+  int get queueSize => _messageQueue.queueSize;
 
   /// Wait until connected and session is ready, with timeout.
   Future<bool> waitForReady({Duration timeout = const Duration(seconds: 15)}) async {
@@ -40,7 +54,36 @@ class ChatService extends ChangeNotifier {
   }
 
   void _onGatewayChanged() {
+    // Process queued messages when connection is restored
+    if (_gateway.isConnected && _messageQueue.hasQueuedMessages) {
+      debugPrint('🔄 Connection restored, processing ${_messageQueue.queueSize} queued messages');
+      _processQueue();
+    }
     notifyListeners();
+  }
+
+  /// Load cached messages from previous session
+  Future<void> _loadCachedMessages() async {
+    if (_cacheLoaded) return;
+    
+    final sk = _gateway.mainSessionKey;
+    if (sk == null) return;
+
+    final cached = await MessageCache.loadMessages(sk);
+    if (cached.isNotEmpty) {
+      _messages.addAll(cached);
+      _cacheLoaded = true;
+      notifyListeners();
+      debugPrint('📦 Loaded ${cached.length} cached messages');
+    }
+  }
+
+  /// Process outbound message queue
+  Future<void> _processQueue() async {
+    await _messageQueue.processQueue((queuedMsg) async {
+      // Send queued message through gateway
+      await _sendMessageDirect(queuedMsg.text, queuedMsg.attachments);
+    });
   }
 
   /// Handle an incoming gateway event or response.
@@ -129,6 +172,9 @@ class ChatService extends ChangeNotifier {
           _notifyMessage('Fred 🦊', text);
         }
         
+        // Cache messages on completion
+        cacheMessages();
+        
         notifyListeners();
         break;
 
@@ -158,11 +204,14 @@ class ChatService extends ChangeNotifier {
     List<ChatAttachment> localAttachments = const [],
     List<Map<String, dynamic>> gatewayAttachments = const [],
   }) {
+    if (text.trim().isEmpty && gatewayAttachments.isEmpty) return;
+
+    // If not connected, queue the message
     if (!isReady) {
-      debugPrint('⚠️ Cannot send: not ready (connected=${_gateway.isConnected}, session=$sessionKey)');
+      debugPrint('⚠️ Not connected, queueing message');
+      _queueMessage(text, localAttachments, gatewayAttachments);
       return;
     }
-    if (text.trim().isEmpty && gatewayAttachments.isEmpty) return;
 
     final idempotencyKey = _uuid.v4();
 
@@ -273,9 +322,71 @@ class ChatService extends ChangeNotifier {
     }
   }
 
+  /// Queue message for sending when connection is restored
+  void _queueMessage(
+    String text,
+    List<ChatAttachment> localAttachments,
+    List<Map<String, dynamic>> gatewayAttachments,
+  ) {
+    final idempotencyKey = _uuid.v4();
+
+    // Build display text
+    String displayText = text.trim();
+    if (displayText.isEmpty && localAttachments.isNotEmpty) {
+      final type = localAttachments.first.type;
+      displayText = type == 'audio' ? '🎤 Voice note' : '📷 Photo';
+    }
+
+    // Add to UI with "sending" state
+    _messages.add(ChatMessage(
+      id: 'queued-$idempotencyKey',
+      role: 'user',
+      text: '$displayText ⏳', // Show pending indicator
+      timestamp: DateTime.now(),
+      state: ChatMessageState.streaming, // Use streaming state as "sending"
+      attachments: localAttachments,
+    ));
+    notifyListeners();
+
+    // Queue for sending when connected
+    _messageQueue.enqueue(text, attachments: gatewayAttachments);
+  }
+
+  /// Send message directly (bypasses queue, used by queue processor)
+  Future<void> _sendMessageDirect(
+    String text,
+    List<Map<String, dynamic>>? gatewayAttachments,
+  ) async {
+    if (!isReady) {
+      throw Exception('Not ready to send');
+    }
+
+    final idempotencyKey = _uuid.v4();
+    final params = <String, dynamic>{
+      'message': text,
+      'idempotencyKey': idempotencyKey,
+    };
+
+    if (gatewayAttachments != null && gatewayAttachments.isNotEmpty) {
+      params['attachments'] = gatewayAttachments;
+    }
+
+    await _gateway.sendOperatorRequest('chat', 'agent.run', params);
+    debugPrint('✅ Sent queued message');
+  }
+
+  /// Cache messages periodically
+  Future<void> cacheMessages() async {
+    final sk = sessionKey;
+    if (sk == null) return;
+    
+    await MessageCache.saveMessages(_messages, sk);
+  }
+
   @override
   void dispose() {
     _gateway.removeListener(_onGatewayChanged);
+    _messageQueue.removeListener(notifyListeners);
     super.dispose();
   }
 }
