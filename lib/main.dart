@@ -44,6 +44,12 @@ void main() async {
 
   // Wire raw gateway messages to chat service
   gateway.onRawMessage = chat.handleGatewayMessage;
+  
+  // Wire gateway connection to capability probing
+  gateway.onConnected = (url) {
+    debugPrint('🔍 Gateway connected, probing capabilities...');
+    capabilities.probe(url);
+  };
 
   // Wire network monitor to trigger reconnects on network change
   networkMonitor.onNetworkReconnect = () {

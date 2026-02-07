@@ -6,12 +6,14 @@ class ConnectionBadge extends StatelessWidget {
   final msg.GatewayConnectionState state;
   final String? errorMessage;
   final String? activeUrl;
+  final bool nodePairingPending;
 
   const ConnectionBadge({
     super.key,
     required this.state,
     this.errorMessage,
     this.activeUrl,
+    this.nodePairingPending = false,
   });
 
   String _urlLabel(String? url) {
@@ -34,7 +36,12 @@ class ConnectionBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (color, icon, label) = switch (state) {
+    // If operator connected but node pairing pending, show that state
+    final effectiveState = (state == msg.GatewayConnectionState.connected && nodePairingPending)
+        ? msg.GatewayConnectionState.pairingPending
+        : state;
+    
+    final (color, icon, label) = switch (effectiveState) {
       msg.GatewayConnectionState.disconnected => (
           Colors.grey,
           Icons.cloud_off,
@@ -53,7 +60,7 @@ class ConnectionBadge extends StatelessWidget {
       msg.GatewayConnectionState.pairingPending => (
           Colors.blue,
           Icons.phonelink_lock,
-          'Pairing...'
+          nodePairingPending ? 'Device Pairing...' : 'Pairing...'
         ),
       msg.GatewayConnectionState.connected => (
           Colors.green,

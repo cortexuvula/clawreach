@@ -33,7 +33,6 @@ class NodeConnectionService extends ChangeNotifier {
   int _pairingRetryCount = 0;
   int _reconnectAttempts = 0;
   bool _backgrounded = false;
-  static const _maxPairingRetries = 60; // 5 min at 5s intervals
   static const _maxBackoffMs = 60000; // Cap at 60s
 
   /// Register command handlers here.
@@ -283,17 +282,14 @@ class NodeConnectionService extends ChangeNotifier {
     if (_connected || !_pairingPending || _backgrounded) return;
 
     _pairingRetryCount++;
-    if (_pairingRetryCount > _maxPairingRetries) {
-      debugPrint('❌ [Node] Pairing timed out after $_maxPairingRetries retries');
-      _pairingPending = false;
-      notifyListeners();
-      return;
-    }
-
+    
+    // No max retries - keep trying as long as we're in pairing pending state
+    // This allows connection to succeed after manual approval + gateway restart
+    
     // Backoff: 5s → 10s → 20s → 30s cap
     final delay = (5000 * (1 << (_pairingRetryCount - 1).clamp(0, 2)))
         .clamp(5000, 30000);
-    debugPrint('🔗 [Node] Pairing retry $_pairingRetryCount/$_maxPairingRetries in ${delay}ms...');
+    debugPrint('🔗 [Node] Pairing retry #$_pairingRetryCount in ${delay}ms (waiting for approval)...');
 
     _pairingRetryTimer = Timer(Duration(milliseconds: delay), () {
       if (_connected || !_pairingPending) return;

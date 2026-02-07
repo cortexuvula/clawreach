@@ -1,7 +1,10 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/chat_message.dart';
 
 /// A chat message bubble with optional media attachments.
@@ -86,7 +89,23 @@ class ChatBubble extends StatelessWidget {
 
             // Audio attachments
             for (final att in message.attachments.where((a) => a.isAudio))
-              _AudioBubble(attachment: att, textColor: textColor),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: AudioPlayerWidget(
+                  attachment: att,
+                  textColor: textColor,
+                ),
+              ),
+
+            // File attachments (non-audio, non-image)
+            for (final att in message.attachments.where((a) => !a.isAudio && !a.isImage))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: FileAttachmentWidget(
+                  attachment: att,
+                  textColor: textColor,
+                ),
+              ),
 
             // Text content
             if (message.text.isNotEmpty &&
@@ -147,6 +166,7 @@ class ChatBubble extends StatelessWidget {
         message.text != '📷 Photo';
     final hasImages = message.attachments.any((a) => a.isImage);
     final hasAudio = message.attachments.any((a) => a.isAudio);
+    final hasFiles = message.attachments.any((a) => !a.isAudio && !a.isImage);
 
     final items = <PopupMenuEntry<String>>[
       if (hasText)
@@ -171,7 +191,7 @@ class ChatBubble extends StatelessWidget {
             ],
           ),
         ),
-      if (hasImages || hasAudio)
+      if (hasImages || hasAudio || hasFiles)
         const PopupMenuItem(
           value: 'share_media',
           child: Row(
@@ -291,64 +311,334 @@ class ChatBubble extends StatelessWidget {
       );
 }
 
-/// Compact voice note display in a bubble.
-class _AudioBubble extends StatelessWidget {
+/// Interactive audio player with play/pause, seek bar, and duration.
+class AudioPlayerWidget extends StatefulWidget {
   final ChatAttachment attachment;
   final Color textColor;
 
-  const _AudioBubble({required this.attachment, required this.textColor});
+  const AudioPlayerWidget({
+    super.key,
+    required this.attachment,
+    required this.textColor,
+  });
+
+  @override
+  State<AudioPlayerWidget> createState() => _AudioPlayerWidgetState();
+}
+
+class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
+  late final AudioPlayer _player;
+  bool _isPlaying = false;
+  Duration _position = Duration.zero;
+  Duration? _duration;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _player = AudioPlayer();
+    _duration = widget.attachment.duration;
+
+    // Listen to player state
+    _player.onPlayerStateChanged.listen((state) {
+      if (mounted) {
+        setState(() {
+          _isPlaying = state == PlayerState.playing;
+        });
+      }
+    });
+
+    // Listen to position updates
+    _player.onPositionChanged.listen((position) {
+      if (mounted) {
+        setState(() {
+          _position = position;
+        });
+      }
+    });
+
+    // Listen to duration updates
+    _player.onDurationChanged.listen((duration) {
+      if (mounted) {
+        setState(() {
+          _duration = duration;
+        });
+      }
+    });
+
+    // Auto-stop when completed
+    _player.onPlayerComplete.listen((_) {
+      if (mounted) {
+        setState(() {
+          _isPlaying = false;
+          _position = Duration.zero;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  Future<void> _togglePlayPause() async {
+    try {
+      if (_isPlaying) {
+        await _player.pause();
+      } else {
+        setState(() => _isLoading = true);
+        
+        // If at the end, restart from beginning
+        if (_position.inSeconds > 0 && _duration != null && 
+            _position.inSeconds >= _duration!.inSeconds - 1) {
+          await _player.seek(Duration.zero);
+        }
+
+        if (widget.attachment.filePath != null && !kIsWeb) {
+          await _player.play(DeviceFileSource(widget.attachment.filePath!));
+        } else if (widget.attachment.bytes != null) {
+          await _player.play(BytesSource(widget.attachment.bytes!));
+        }
+        
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to play audio: $e'),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _seek(double value) async {
+    final position = Duration(seconds: value.toInt());
+    await _player.seek(position);
+  }
+
+  String _formatDuration(Duration d) {
+    final minutes = d.inMinutes;
+    final seconds = d.inSeconds % 60;
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
 
   @override
   Widget build(BuildContext context) {
-    final durationStr = attachment.duration != null
-        ? '${attachment.duration!.inMinutes}:${(attachment.duration!.inSeconds % 60).toString().padLeft(2, '0')}'
-        : '';
+    final color = widget.textColor;
+    final maxDuration = _duration ?? widget.attachment.duration ?? const Duration(minutes: 1);
+    final progress = maxDuration.inSeconds > 0
+        ? _position.inSeconds / maxDuration.inSeconds
+        : 0.0;
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.mic, size: 20, color: textColor.withValues(alpha: 0.7)),
-          const SizedBox(width: 8),
-          // Waveform placeholder
-          Flexible(
-            child: Container(
-              height: 28,
-              constraints: const BoxConstraints(maxWidth: 160),
-              decoration: BoxDecoration(
-                color: textColor.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(14),
+          Row(
+            children: [
+              // Play/Pause button
+              IconButton(
+                icon: _isLoading
+                    ? SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: color,
+                        ),
+                      )
+                    : Icon(
+                        _isPlaying ? Icons.pause : Icons.play_arrow,
+                        color: color,
+                      ),
+                onPressed: _isLoading ? null : _togglePlayPause,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 32,
+                  minHeight: 32,
+                ),
               ),
-              child: Row(
+              const SizedBox(width: 4),
+
+              // Waveform visualization (static)
+              Expanded(
+                child: SizedBox(
+                  height: 32,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: List.generate(20, (i) {
+                      final isActive = progress > (i / 20);
+                      return Container(
+                        width: 2.5,
+                        height: 8.0 + (i % 3) * 4 + (i % 5) * 2,
+                        decoration: BoxDecoration(
+                          color: color.withValues(
+                            alpha: isActive ? 0.7 : 0.3,
+                          ),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      );
+                    }),
+                  ),
+                ),
+              ),
+
+              const SizedBox(width: 8),
+
+              // Duration
+              Text(
+                '${_formatDuration(_position)} / ${_formatDuration(maxDuration)}',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: color.withValues(alpha: 0.6),
+                ),
+              ),
+            ],
+          ),
+
+          // Seek bar
+          SliderTheme(
+            data: SliderThemeData(
+              trackHeight: 2,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+              activeTrackColor: color.withValues(alpha: 0.8),
+              inactiveTrackColor: color.withValues(alpha: 0.2),
+              thumbColor: color,
+              overlayColor: color.withValues(alpha: 0.2),
+            ),
+            child: Slider(
+              value: _position.inSeconds.toDouble().clamp(0, maxDuration.inSeconds.toDouble()),
+              max: maxDuration.inSeconds.toDouble(),
+              onChanged: _seek,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// File attachment display with download/open options.
+class FileAttachmentWidget extends StatelessWidget {
+  final ChatAttachment attachment;
+  final Color textColor;
+
+  const FileAttachmentWidget({
+    super.key,
+    required this.attachment,
+    required this.textColor,
+  });
+
+  IconData _getFileIcon() {
+    final mime = attachment.mimeType.toLowerCase();
+    if (mime.contains('pdf')) return Icons.picture_as_pdf;
+    if (mime.contains('zip') || mime.contains('archive')) return Icons.folder_zip;
+    if (mime.contains('text')) return Icons.description;
+    if (mime.contains('video')) return Icons.video_file;
+    return Icons.insert_drive_file;
+  }
+
+  String _formatFileSize(int? bytes) {
+    if (bytes == null) return '';
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  Future<void> _openFile(BuildContext context) async {
+    if (attachment.filePath != null && !kIsWeb) {
+      final file = File(attachment.filePath!);
+      if (await file.exists()) {
+        final uri = Uri.file(file.path);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri);
+        } else {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Cannot open this file type'),
+                duration: Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fileName = attachment.fileName ?? 'file';
+    final fileSize = attachment.fileSize ?? attachment.bytes?.length;
+
+    return InkWell(
+      onTap: () => _openFile(context),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: textColor.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: textColor.withValues(alpha: 0.2),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              _getFileIcon(),
+              size: 32,
+              color: textColor.withValues(alpha: 0.7),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const SizedBox(width: 10),
-                  for (int i = 0; i < 12; i++)
-                    Container(
-                      width: 3,
-                      height: 6.0 + (i % 3) * 5 + (i % 5) * 2,
-                      margin: const EdgeInsets.symmetric(horizontal: 1.5),
-                      decoration: BoxDecoration(
-                        color: textColor.withValues(alpha: 0.4),
-                        borderRadius: BorderRadius.circular(2),
+                  Text(
+                    fileName,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: textColor,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (fileSize != null)
+                    Text(
+                      _formatFileSize(fileSize),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: textColor.withValues(alpha: 0.5),
                       ),
                     ),
-                  const Spacer(),
                 ],
               ),
             ),
-          ),
-          if (durationStr.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            Text(
-              durationStr,
-              style: TextStyle(
-                fontSize: 12,
-                color: textColor.withValues(alpha: 0.5),
-              ),
+            Icon(
+              Icons.file_download,
+              size: 20,
+              color: textColor.withValues(alpha: 0.5),
             ),
           ],
-        ],
+        ),
       ),
     );
   }

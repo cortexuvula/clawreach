@@ -1,8 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import 'node_connection_service.dart';
+
+// Platform-specific imports
+import 'package:webview_flutter/webview_flutter.dart'
+    if (dart.library.html) 'package:webview_flutter/webview_flutter.dart';
+import 'dart:html' as html show window, MessageEvent;
 
 /// Handles canvas.* commands from the gateway.
 /// Manages a WebView that renders the A2UI interface.
@@ -37,10 +41,13 @@ class CanvasService extends ChangeNotifier {
   }
 
   /// Set the WebView controller (called when WebView is created in the UI).
+  /// Only used on native platforms (not web).
   void setWebViewController(WebViewController controller) {
-    _webViewController = controller;
-    _a2uiReady = false;
-    // If there's pending JSONL, we'll push it after the page loads
+    if (!kIsWeb) {
+      _webViewController = controller;
+      _a2uiReady = false;
+      // If there's pending JSONL, we'll push it after the page loads
+    }
   }
 
   /// Clear the WebView controller (called when CanvasOverlay is disposed).
@@ -58,6 +65,15 @@ class CanvasService extends ChangeNotifier {
 
   /// Proactively probe for A2UI readiness after page load.
   Future<void> _probeA2uiReady() async {
+    // On web, skip probing - iframe will load independently
+    if (kIsWeb) {
+      _a2uiReady = true;
+      if (_pendingJsonl.isNotEmpty) {
+        _pushPendingJsonl();
+      }
+      return;
+    }
+
     if (_webViewController == null) return;
     // Poll every 300ms up to 5s for the custom element + JS bundle to initialize
     for (int i = 0; i < 17; i++) {
@@ -118,27 +134,34 @@ class CanvasService extends ChangeNotifier {
     final config = _nodeConnection.activeConfig;
     if (config == null) return '';
     // A2UI is served at /__openclaw__/a2ui/ on the gateway HTTP server
-    final baseUrl = config.url.replaceFirst(RegExp(r'/+$'), '');
+    // Convert ws:// to http:// and wss:// to https://
+    var baseUrl = config.url.replaceFirst(RegExp(r'/+$'), '');
+    baseUrl = baseUrl.replaceFirst('ws://', 'http://').replaceFirst('wss://', 'https://');
     return '$baseUrl/__openclaw__/a2ui/?platform=android';
   }
 
   Future<Map<String, dynamic>> _handlePresent(
     String requestId, String command, Map<String, dynamic> params,
   ) async {
+    debugPrint('🖼️ Canvas present params: $params');
     final url = params['url'] as String?;
+    debugPrint('🖼️ Canvas URL from params: $url');
     _currentUrl = url ?? _buildA2uiUrl();
+    debugPrint('🖼️ Canvas final URL: $_currentUrl');
     _visible = true;
     _a2uiReady = false;
-    debugPrint('🖼️ Canvas present: $_currentUrl');
     notifyListeners();
 
-    // Wait for the WebView widget to mount and register its controller
-    await _waitForWebView();
+    if (!kIsWeb) {
+      // Wait for the WebView widget to mount and register its controller
+      await _waitForWebView();
 
-    // Navigate WebView
-    if (_webViewController != null && _currentUrl != null) {
-      await _webViewController!.loadRequest(Uri.parse(_currentUrl!));
+      // Navigate WebView
+      if (_webViewController != null && _currentUrl != null) {
+        await _webViewController!.loadRequest(Uri.parse(_currentUrl!));
+      }
     }
+    // On web, the iframe will be created by the widget with the current URL
 
     return {'ok': true};
   }
@@ -160,11 +183,19 @@ class CanvasService extends ChangeNotifier {
     if (url == null) throw Exception('url required');
     _currentUrl = url;
     _a2uiReady = false;
-    debugPrint('🖼️ Canvas navigate: $url');
+    
+    // Auto-show canvas if not visible
+    if (!_visible) {
+      _visible = true;
+      debugPrint('🖼️ Canvas navigate (auto-showing): $url');
+    } else {
+      debugPrint('🖼️ Canvas navigate: $url');
+    }
 
-    if (_webViewController != null) {
+    if (!kIsWeb && _webViewController != null) {
       await _webViewController!.loadRequest(Uri.parse(url));
     }
+    // On web, notifyListeners will trigger iframe rebuild with new URL
     notifyListeners();
     return {'ok': true};
   }
@@ -175,6 +206,12 @@ class CanvasService extends ChangeNotifier {
     final js = params['javaScript'] as String?;
     if (js == null) throw Exception('javaScript required');
     debugPrint('🖼️ Canvas eval: ${js.substring(0, js.length.clamp(0, 60))}...');
+
+    if (kIsWeb) {
+      // On web, iframe eval requires postMessage coordination
+      // For now, return unsupported
+      throw Exception('canvas.eval not supported on web platform (iframe cross-origin restriction)');
+    }
 
     if (_webViewController == null) {
       throw Exception('WebView not initialized');
@@ -188,6 +225,12 @@ class CanvasService extends ChangeNotifier {
     String requestId, String command, Map<String, dynamic> params,
   ) async {
     debugPrint('🖼️ Canvas snapshot requested');
+
+    if (kIsWeb) {
+      // On web, iframe snapshot requires postMessage coordination
+      // For now, return unsupported
+      throw Exception('canvas.snapshot not supported on web platform (iframe cross-origin restriction)');
+    }
 
     if (_webViewController == null) {
       throw Exception('WebView not initialized');
@@ -234,20 +277,22 @@ class CanvasService extends ChangeNotifier {
       _a2uiReady = false;
       notifyListeners();
 
-      await _waitForWebView();
+      if (!kIsWeb) {
+        await _waitForWebView();
 
-      // Load the A2UI page
-      if (_webViewController != null && _currentUrl != null) {
-        await _webViewController!.loadRequest(Uri.parse(_currentUrl!));
+        // Load the A2UI page
+        if (_webViewController != null && _currentUrl != null) {
+          await _webViewController!.loadRequest(Uri.parse(_currentUrl!));
+        }
       }
     }
 
-    if (_webViewController != null) {
+    if (kIsWeb || _webViewController != null) {
       // Wait for A2UI host API to be ready
       await _waitForA2uiReady();
       await _pushJsonlToWebView(jsonl);
     } else {
-      // Buffer for later
+      // Buffer for later (native only)
       _pendingJsonl += '$jsonl\n';
     }
 
@@ -260,7 +305,10 @@ class CanvasService extends ChangeNotifier {
     debugPrint('🖼️ A2UI reset');
     _a2uiReady = false;
 
-    if (_webViewController != null) {
+    if (kIsWeb) {
+      // On web, use postMessage to reset
+      html.window.postMessage({'type': 'openclaw-a2ui-reset'}, '*');
+    } else if (_webViewController != null) {
       await _webViewController!.runJavaScript('''
         (() => {
           try {
@@ -275,6 +323,9 @@ class CanvasService extends ChangeNotifier {
 
   /// Wait for the WebView widget to mount (up to 3 seconds).
   Future<void> _waitForWebView() async {
+    // On web, iframes load independently - no controller to wait for
+    if (kIsWeb) return;
+
     for (int i = 0; i < 30; i++) {
       if (_webViewController != null) return;
       await Future.delayed(const Duration(milliseconds: 100));
@@ -285,6 +336,14 @@ class CanvasService extends ChangeNotifier {
   /// Wait for globalThis.openclawA2UI to be available (up to 8 seconds).
   Future<void> _waitForA2uiReady() async {
     if (_a2uiReady) return;
+
+    // On web, use a simple delay instead of polling (iframe communication is async)
+    if (kIsWeb) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      _a2uiReady = true;
+      return;
+    }
+
     if (_webViewController == null) {
       debugPrint('⚠️ A2UI wait: no WebView controller');
       return;
@@ -331,13 +390,30 @@ class CanvasService extends ChangeNotifier {
 
   /// Push JSONL content to the A2UI WebView via JavaScript.
   Future<void> _pushJsonlToWebView(String jsonl) async {
-    if (_webViewController == null) return;
-
     // Parse JSONL lines into a JSON array string
     final lines = jsonl.split('\n').where((l) => l.trim().isNotEmpty).toList();
     if (lines.isEmpty) return;
 
     final messagesJson = '[${lines.join(',')}]';
+
+    if (kIsWeb) {
+      // On web, use postMessage to communicate with iframe
+      try {
+        // Parse the messages to send as structured data
+        final messages = jsonDecode(messagesJson);
+        html.window.postMessage({
+          'type': 'openclaw-a2ui-push',
+          'messages': messages,
+        }, '*');
+        debugPrint('🖼️ A2UI push (web): sent ${lines.length} messages via postMessage');
+      } catch (e) {
+        debugPrint('❌ A2UI push (web) error: $e');
+      }
+      return;
+    }
+
+    // Native platform - use WebViewController
+    if (_webViewController == null) return;
 
     // Use JSON.stringify for safe escaping, pass via base64 to avoid any
     // template literal / quote escaping issues

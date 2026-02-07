@@ -131,7 +131,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('gateway_config', jsonEncode(config.toJson()));
+    final configJson = jsonEncode(config.toJson());
+    await prefs.setString('gateway_config', configJson);
+    debugPrint('💾 Saved config to SharedPreferences: ${configJson.length} chars');
+    debugPrint('💾 Config URL: ${config.url}');
 
     widget.onSave(config);
     if (mounted) {

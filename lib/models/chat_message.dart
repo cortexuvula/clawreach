@@ -8,6 +8,7 @@ class ChatAttachment {
   final String? filePath; // Local path (for user-sent media)
   final Uint8List? bytes; // Raw bytes (for display)
   final Duration? duration; // For audio
+  final int? fileSize; // File size in bytes
 
   const ChatAttachment({
     required this.type,
@@ -16,10 +17,12 @@ class ChatAttachment {
     this.filePath,
     this.bytes,
     this.duration,
+    this.fileSize,
   });
 
   bool get isImage => type == 'image';
   bool get isAudio => type == 'audio';
+  bool get isFile => type == 'file';
 }
 
 /// A chat message in the conversation.

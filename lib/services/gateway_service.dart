@@ -29,6 +29,9 @@ class GatewayService extends ChangeNotifier {
 
   /// Callback for raw messages (used by ChatService).
   void Function(Map<String, dynamic>)? onRawMessage;
+  
+  /// Callback when connection succeeds (used for capability probing).
+  void Function(String gatewayUrl)? onConnected;
 
   GatewayService(this._crypto);
 
@@ -295,6 +298,11 @@ class GatewayService extends ChangeNotifier {
     _reconnectAttempts = 0; // Reset backoff on success
     debugPrint('✅ Connected to gateway via ${_activeUrl ?? "unknown"}! session=$_mainSessionKey');
     _setState(msg.GatewayConnectionState.connected);
+    
+    // Notify listeners (e.g., for capability probing)
+    if (onConnected != null && _config != null) {
+      onConnected!(_config!.url);
+    }
   }
 
   void _handleConnectError(Map<String, dynamic> json) {

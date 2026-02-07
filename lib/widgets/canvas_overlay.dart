@@ -1,7 +1,10 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../services/canvas_service.dart';
+import 'canvas_web_view_stub.dart'
+    if (dart.library.html) 'canvas_web_view.dart';
 
 /// Overlay that shows the Canvas/A2UI WebView when active.
 class CanvasOverlay extends StatefulWidget {
@@ -12,17 +15,21 @@ class CanvasOverlay extends StatefulWidget {
 }
 
 class _CanvasOverlayState extends State<CanvasOverlay> {
-  late final WebViewController _controller;
+  WebViewController? _controller; // Nullable for web platform
   String? _loadedUrl;
   bool _initialized = false;
 
   @override
   void initState() {
     super.initState();
-    _setupController();
+    if (!kIsWeb) {
+      _setupNativeController();
+    } else {
+      _setupWebIframe();
+    }
   }
 
-  void _setupController() {
+  void _setupNativeController() {
     final canvas = context.read<CanvasService>();
 
     _controller = WebViewController()
@@ -53,15 +60,19 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
       ));
 
     // Register with CanvasService
-    canvas.setWebViewController(_controller);
+    canvas.setWebViewController(_controller!);
 
     // Load initial URL if available
     final url = canvas.currentUrl;
     if (url != null && url.isNotEmpty) {
       _loadedUrl = url;
-      _controller.loadRequest(Uri.parse(url));
+      _controller!.loadRequest(Uri.parse(url));
     }
 
+    _initialized = true;
+  }
+
+  void _setupWebIframe() {
     _initialized = true;
   }
 
@@ -70,7 +81,9 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
     // Clear the controller reference from CanvasService
     try {
       final canvas = context.read<CanvasService>();
-      canvas.clearWebViewController();
+      if (!kIsWeb) {
+        canvas.clearWebViewController();
+      }
     } catch (_) {
       // Context may not be available during dispose
     }
@@ -81,10 +94,15 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
   Widget build(BuildContext context) {
     final canvas = context.watch<CanvasService>();
 
-    // Load new URL if it changed after initialization
+    // Handle URL changes
     if (_initialized && canvas.currentUrl != null && canvas.currentUrl != _loadedUrl) {
       _loadedUrl = canvas.currentUrl;
-      _controller.loadRequest(Uri.parse(canvas.currentUrl!));
+      if (kIsWeb) {
+        // For web, rebuild with new iframe
+        setState(() {});
+      } else {
+        _controller?.loadRequest(Uri.parse(canvas.currentUrl!));
+      }
     }
 
     return Material(
@@ -123,7 +141,11 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
                     icon: const Icon(Icons.refresh, color: Colors.white38, size: 18),
                     onPressed: () {
                       if (_loadedUrl != null) {
-                        _controller.loadRequest(Uri.parse(_loadedUrl!));
+                        if (kIsWeb) {
+                          setState(() {}); // Rebuild iframe
+                        } else {
+                          _controller?.loadRequest(Uri.parse(_loadedUrl!));
+                        }
                       }
                     },
                     tooltip: 'Reload',
@@ -131,13 +153,29 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
                 ],
               ),
             ),
-            // WebView
+            // WebView or Iframe
             Expanded(
-              child: WebViewWidget(controller: _controller),
+              child: kIsWeb
+                  ? _buildWebIframe()
+                  : WebViewWidget(controller: _controller!),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildWebIframe() {
+    if (_loadedUrl == null || _loadedUrl!.isEmpty) {
+      return const Center(
+        child: Text(
+          'No canvas URL',
+          style: TextStyle(color: Colors.white38),
+        ),
+      );
+    }
+
+    // Use the conditionally imported CanvasWebView
+    return CanvasWebView(url: _loadedUrl!);
   }
 }

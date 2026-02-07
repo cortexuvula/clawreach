@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -162,12 +163,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _loadConfigAndAutoConnect() async {
     final prefs = await SharedPreferences.getInstance();
     final configStr = prefs.getString('gateway_config');
+    debugPrint('🔧 Loading config from SharedPreferences...');
+    debugPrint('🔧 Config found: ${configStr != null ? "YES (${configStr.length} chars)" : "NO"}');
     if (configStr != null) {
       final config = GatewayConfig.fromJson(
         jsonDecode(configStr) as Map<String, dynamic>,
       );
+      debugPrint('🔧 Parsed config: ${config.url}');
       setState(() => _config = config);
       _connectSequential(config);
+    } else {
+      debugPrint('🔧 No saved config — user needs to enter settings');
     }
   }
 
@@ -226,7 +232,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _startRecording() async {
     // Check permission
     if (!await _recorder.hasPermission()) {
-      await Permission.microphone.request();
+      if (!kIsWeb) {
+        await Permission.microphone.request();
+      }
       if (!await _recorder.hasPermission()) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -237,12 +245,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     }
 
-    final dir = await getTemporaryDirectory();
-    final path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    // On web, record package handles storage internally (blob URLs)
+    // On native, we need to provide a file path
+    final String path;
+    final AudioEncoder encoder;
+    final String extension;
+    
+    if (kIsWeb) {
+      // Web: Use opus (compressed) or wav (fallback). AAC-LC not supported.
+      encoder = AudioEncoder.opus;
+      extension = 'webm';
+      path = 'voice_${DateTime.now().millisecondsSinceEpoch}.$extension';
+    } else {
+      // Native: Use AAC-LC for best mobile compatibility
+      encoder = AudioEncoder.aacLc;
+      extension = 'm4a';
+      final dir = await getTemporaryDirectory();
+      path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.$extension';
+    }
 
     await _recorder.start(
-      const RecordConfig(
-        encoder: AudioEncoder.aacLc,
+      RecordConfig(
+        encoder: encoder,
         sampleRate: 44100,
         bitRate: 128000,
       ),
@@ -278,41 +302,69 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     if (path == null) return;
 
-    final file = File(path);
-    if (!await file.exists()) return;
-
     final chat = context.read<ChatService>();
-
-    // Transcription fallback chain:
-    // 1. Server-side faster-whisper (if available)
-    // 2. On-device Android STT
-    // 3. Send as audio attachment
     final caps = context.read<CapabilityService>();
     String? transcript;
 
-    // Try server-side transcription first
-    if (caps.hasTranscriptionServer) {
-      transcript = await _transcribeAudio(file);
-    }
+    debugPrint('🎤 hasTranscriptionServer: ${caps.hasTranscriptionServer}');
 
-    // Fallback: on-device speech-to-text
-    if ((transcript == null || transcript.isEmpty) && !caps.hasTranscriptionServer) {
-      debugPrint('🎤 No transcription server, trying on-device STT...');
-      transcript = await _transcribeOnDevice(file);
+    // On web: path is blob URL, fetch blob data for transcription
+    // On native: path is file path, check existence
+    if (kIsWeb) {
+      // Web: Try server-side transcription with blob data
+      debugPrint('🎤 Web mode, path: $path');
+      if (caps.hasTranscriptionServer) {
+        debugPrint('🎤 Attempting web transcription...');
+        transcript = await _transcribeAudioWeb(path, 'audio/webm');
+      } else {
+        debugPrint('🎤 No transcription server detected');
+      }
+    } else {
+      // Native: Check file exists
+      final file = File(path);
+      if (!await file.exists()) return;
+
+      // Try server-side transcription
+      if (caps.hasTranscriptionServer) {
+        transcript = await _transcribeAudio(file);
+      }
+
+      // Fallback: on-device speech-to-text
+      if ((transcript == null || transcript.isEmpty) && !caps.hasTranscriptionServer) {
+        debugPrint('🎤 No transcription server, trying on-device STT...');
+        transcript = await _transcribeOnDevice(file);
+      }
     }
 
     if (transcript != null && transcript.isNotEmpty) {
       debugPrint('🎤 Transcript: $transcript');
       chat.sendMessage('🎤 $transcript');
-    } else {
-      // Final fallback: send as audio attachment
+    } else if (!kIsWeb) {
+      // Final fallback: send as audio attachment (native only)
       debugPrint('🎤 All transcription failed, sending as audio file');
+      final file = File(path);
       await chat.sendFile(
         file: file,
         type: 'audio',
         mimeType: 'audio/mp4',
         duration: duration,
       );
+    } else {
+      // Web: no transcription server or transcription failed
+      debugPrint('🎤 Web audio transcription unavailable or failed');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              caps.hasTranscriptionServer
+                  ? '🎤 Transcription failed'
+                  : '🎤 No transcription server configured',
+            ),
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
     _scrollToBottom();
   }
@@ -328,10 +380,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return null;
   }
 
-  /// Transcribe audio file via the local transcription server.
+  /// Transcribe audio file via the local transcription server (native).
   Future<String?> _transcribeAudio(File file) async {
     try {
       final bytes = await file.readAsBytes();
+      return await _sendTranscriptionRequest(bytes, 'audio/mp4');
+    } catch (e) {
+      debugPrint('🎤 Transcription failed: $e');
+      return null;
+    }
+  }
+
+  /// Transcribe audio from blob URL via the local transcription server (web).
+  Future<String?> _transcribeAudioWeb(String blobUrl, String mimeType) async {
+    try {
+      debugPrint('🎤 Fetching blob from: $blobUrl');
+      // Fetch blob data from the URL
+      final response = await http.get(Uri.parse(blobUrl));
+      debugPrint('🎤 Blob fetch: ${response.statusCode}, ${response.bodyBytes.length} bytes');
+      if (response.statusCode != 200) {
+        debugPrint('🎤 Failed to fetch blob: ${response.statusCode}');
+        return null;
+      }
+      return await _sendTranscriptionRequest(response.bodyBytes, mimeType);
+    } catch (e, stack) {
+      debugPrint('🎤 Web transcription failed: $e');
+      debugPrint('🎤 Stack: $stack');
+      return null;
+    }
+  }
+
+  /// Send transcription request to the server (shared logic).
+  Future<String?> _sendTranscriptionRequest(List<int> bytes, String mimeType) async {
+    try {
       final b64 = base64Encode(bytes);
 
       // Try gateway's local IP first, then fallback
@@ -341,14 +422,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           : 'localhost';
       final url = 'http://$gatewayHost:8014/transcribe';
 
-      debugPrint('🎤 Transcribing via $url (${(bytes.length / 1024).toStringAsFixed(0)} KB)...');
+      debugPrint('🎤 Transcribing via $url (${(bytes.length / 1024).toStringAsFixed(0)} KB, $mimeType)...');
 
       final response = await http.post(
         Uri.parse(url),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'audio': b64,
-          'mimeType': 'audio/mp4',
+          'mimeType': mimeType,
         }),
       ).timeout(const Duration(seconds: 60));
 
@@ -363,7 +444,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         return null;
       }
     } catch (e) {
-      debugPrint('🎤 Transcription failed: $e');
+      debugPrint('🎤 Transcription request failed: $e');
       return null;
     }
   }
@@ -576,17 +657,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _buildAppBarStatus(
       GatewayService gateway, ChatService chat, NodeConnectionService nodeConn) {
-    final (color, label) = switch (gateway.state) {
-      msg.GatewayConnectionState.disconnected => (Colors.grey, 'Offline'),
-      msg.GatewayConnectionState.connecting => (Colors.orange, 'Connecting...'),
-      msg.GatewayConnectionState.authenticating => (Colors.amber, 'Auth...'),
-      msg.GatewayConnectionState.pairingPending => (Colors.blue, 'Pairing...'),
-      msg.GatewayConnectionState.connected => (
-          chat.isReady ? Colors.green : Colors.lime,
-          chat.isReady ? _routeLabel(gateway.activeUrl) : 'Syncing...',
-        ),
-      msg.GatewayConnectionState.error => (Colors.red, 'Error'),
-    };
+    // Show node pairing state if operator connected but node is waiting
+    final isNodePairing = gateway.state == msg.GatewayConnectionState.connected && 
+                          nodeConn.isPairingPending;
+    
+    final (color, label) = isNodePairing
+        ? (Colors.orange, 'Device Pairing...')
+        : switch (gateway.state) {
+            msg.GatewayConnectionState.disconnected => (Colors.grey, 'Offline'),
+            msg.GatewayConnectionState.connecting => (Colors.orange, 'Connecting...'),
+            msg.GatewayConnectionState.authenticating => (Colors.amber, 'Auth...'),
+            msg.GatewayConnectionState.pairingPending => (Colors.blue, 'Pairing...'),
+            msg.GatewayConnectionState.connected => (
+                chat.isReady ? Colors.green : Colors.lime,
+                chat.isReady ? _routeLabel(gateway.activeUrl) : 'Syncing...',
+              ),
+            msg.GatewayConnectionState.error => (Colors.red, 'Error'),
+          };
 
     return Row(
       mainAxisSize: MainAxisSize.min,
