@@ -18,6 +18,7 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
   WebViewController? _controller; // Nullable for web platform
   String? _loadedUrl;
   bool _initialized = false;
+  final GlobalKey<CanvasWebViewState> _webViewKey = GlobalKey();
 
   @override
   void initState() {
@@ -73,6 +74,13 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
   }
 
   void _setupWebIframe() {
+    // Register the web view state with canvas service after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final canvas = context.read<CanvasService>();
+      if (_webViewKey.currentState != null) {
+        canvas.registerWebViewState(_webViewKey.currentState);
+      }
+    });
     _initialized = true;
   }
 
@@ -181,7 +189,12 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
       );
     }
 
-    // Use the conditionally imported CanvasWebView
-    return CanvasWebView(url: _loadedUrl!);
+    // Use the conditionally imported CanvasWebView with message handling
+    final canvas = context.read<CanvasService>();
+    return CanvasWebView(
+      key: _webViewKey,
+      url: _loadedUrl!,
+      onMessage: (message) => canvas.handleCanvasMessage(message),
+    );
   }
 }

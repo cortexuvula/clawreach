@@ -4,8 +4,7 @@
 - [ ] **Persistent CI signing key** — upload keystore in GitHub Secrets so builds don't change signing key (no more uninstall/reinstall)
 - [ ] **Single pairing for both roles** — node connection waits for operator pairing, reuses same approval (one pairing instead of two)
 - [ ] **Hot-reload pairing** — gateway watches devices.json for changes, picks up approvals without restart
-- [ ] Canvas/A2UI — fix Column children format, test full round-trip
-- [ ] Test canvas.hide / canvas.eval / canvas.snapshot / canvas.a2ui.reset
+- [ ] Test full canvas round-trip (eval, snapshot, actions, events)
 
 ## Connection & Pairing Improvements
 - [x] **Deep link pairing** — `clawreach://connect?url=...&token=...&fallback=...&name=...` URI scheme
@@ -30,6 +29,7 @@
 - [x] Push notifications
 - [x] Location sharing
 - [x] Canvas/A2UI WebView integration + JS bridge
+- [x] Canvas postMessage bridge for web (bidirectional communication, eval/snapshot support)
 - [x] Settings — smart URL fallback (local + Tailscale)
 - [x] Connection status badge (green dot + route label)
 - [x] Pairing flow — UX feedback (banner, states, validation)

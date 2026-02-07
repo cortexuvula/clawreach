@@ -22,6 +22,9 @@ class CanvasService extends ChangeNotifier {
   WebViewController? _webViewController;
   bool _a2uiReady = false;
   
+  // Web-specific: store reference to canvas widget for postMessage
+  dynamic _canvasWebViewState;
+  
   static const _prefKeyCanvasUrl = 'canvas_last_url';
   static const _prefKeyCanvasVisible = 'canvas_was_visible';
   static const _prefKeyCanvasMinimized = 'canvas_minimized';
@@ -322,9 +325,13 @@ class CanvasService extends ChangeNotifier {
     debugPrint('🖼️ Canvas eval: ${js.substring(0, js.length.clamp(0, 60))}...');
 
     if (kIsWeb) {
-      // On web, iframe eval requires postMessage coordination
-      // For now, return unsupported
-      throw Exception('canvas.eval not supported on web platform (iframe cross-origin restriction)');
+      // On web, use postMessage bridge to eval in iframe
+      try {
+        final result = await CanvasWebBridge.eval(js);
+        return {'result': result};
+      } catch (e) {
+        throw Exception('Canvas eval failed: $e');
+      }
     }
 
     if (_webViewController == null) {
@@ -340,19 +347,27 @@ class CanvasService extends ChangeNotifier {
   ) async {
     debugPrint('🖼️ Canvas snapshot requested');
 
+    final format = params['format'] as String? ?? 'png';
+    final quality = params['quality'] as num? ?? 0.9;
+
     if (kIsWeb) {
-      // On web, iframe snapshot requires postMessage coordination
-      // For now, return unsupported
-      throw Exception('canvas.snapshot not supported on web platform (iframe cross-origin restriction)');
+      // On web, use postMessage bridge to snapshot iframe
+      try {
+        final result = await CanvasWebBridge.snapshot(
+          format: format,
+          quality: quality.toDouble(),
+        );
+        return result;
+      } catch (e) {
+        throw Exception('Canvas snapshot failed: $e');
+      }
     }
 
     if (_webViewController == null) {
       throw Exception('WebView not initialized');
     }
 
-    final format = params['format'] as String? ?? 'png';
     final mimeType = format == 'jpeg' || format == 'jpg' ? 'image/jpeg' : 'image/png';
-    final quality = params['quality'] as num? ?? 0.9;
 
     final js = '''
       (function() {
@@ -555,6 +570,92 @@ class CanvasService extends ChangeNotifier {
       debugPrint('🖼️ A2UI push result: $result');
     } catch (e) {
       debugPrint('❌ A2UI push error: $e');
+    }
+  }
+
+  /// Register the web canvas view state (web platform only)
+  void registerWebViewState(dynamic state) {
+    _canvasWebViewState = state;
+    debugPrint('🌐 Canvas web view state registered');
+  }
+
+  /// Handle incoming messages from canvas (web platform)
+  void handleCanvasMessage(Map<String, dynamic> message) {
+    final type = message['type'] as String?;
+    debugPrint('📨 Canvas message: $type');
+
+    switch (type) {
+      case 'ready':
+        // Canvas page loaded and ready
+        _a2uiReady = true;
+        debugPrint('🖼️ Canvas ready');
+        break;
+
+      case 'response':
+        // Response to a command (eval/snapshot)
+        final requestId = message['requestId'] as String?;
+        if (requestId != null) {
+          CanvasWebBridge.handleResponse(
+            requestId,
+            message['result'],
+            message['error'] as String?,
+          );
+        }
+        break;
+
+      case 'action':
+        // User action (button click, form submit, etc.)
+        _handleCanvasAction(message['data'] as Map<String, dynamic>?);
+        break;
+
+      case 'event':
+        // Canvas event (completion, error, etc.)
+        _handleCanvasEvent(message);
+        break;
+
+      case 'navigation':
+        // Canvas wants to navigate
+        final url = message['url'] as String?;
+        if (url != null) {
+          _currentUrl = url;
+          notifyListeners();
+        }
+        break;
+
+      default:
+        debugPrint('⚠️ Unknown canvas message type: $type');
+    }
+  }
+
+  void _handleCanvasAction(Map<String, dynamic>? data) {
+    if (data == null) return;
+    
+    // Send action back to gateway
+    _nodeConnection.sendNodeEvent('canvas.action', data);
+    debugPrint('📤 Canvas action forwarded to gateway: ${data['action']}');
+  }
+
+  void _handleCanvasEvent(Map<String, dynamic> message) {
+    final event = message['event'] as String?;
+    final data = message['data'] as Map<String, dynamic>?;
+    
+    // Send event to gateway
+    _nodeConnection.sendNodeEvent('canvas.event', {
+      'event': event,
+      'data': data,
+    });
+    debugPrint('📤 Canvas event forwarded to gateway: $event');
+  }
+
+  /// Send a message to the canvas (web platform)
+  void sendMessageToCanvas(Map<String, dynamic> message) {
+    if (kIsWeb && _canvasWebViewState != null) {
+      try {
+        // Call sendMessage on the web view state
+        (_canvasWebViewState as dynamic).sendMessage(message);
+      } catch (e) {
+        debugPrint('❌ Failed to send message to canvas: $e');
+      }
     }
   }
 }
