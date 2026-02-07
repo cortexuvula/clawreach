@@ -24,6 +24,13 @@ class GatewayConfig {
   /// WebSocket URL from a base URL.
   static String toWsUrl(String baseUrl) {
     final uri = Uri.parse(baseUrl);
+    
+    // If already a WebSocket URL, use as-is (for bridges that don't use /ws/node)
+    if (uri.scheme == 'ws' || uri.scheme == 'wss') {
+      return baseUrl;
+    }
+    
+    // Convert http/https to ws/wss and add /ws/node path
     final scheme = uri.scheme == 'https' ? 'wss' : 'ws';
     final port = uri.port > 0 ? uri.port : (uri.scheme == 'https' ? 443 : 80);
     return '$scheme://${uri.host}:$port/ws/node';
