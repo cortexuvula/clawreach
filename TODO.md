@@ -6,6 +6,7 @@
 - [ ] **Hot-reload pairing** — gateway watches devices.json for changes, picks up approvals without restart
 - [ ] Test full canvas round-trip (eval, snapshot, actions, events)
 - [ ] Test offline support (cache, queue, service worker, banner)
+- [ ] Test settings validation (URL/token/name, test connection button)
 
 ## Connection & Pairing Improvements
 - [x] **Deep link pairing** — `clawreach://connect?url=...&token=...&fallback=...&name=...` URI scheme
@@ -33,7 +34,7 @@
 - [x] Location sharing
 - [x] Canvas/A2UI WebView integration + JS bridge
 - [x] Canvas postMessage bridge for web (bidirectional communication, eval/snapshot support)
-- [x] Settings — smart URL fallback (local + Tailscale)
+- [x] Settings — smart URL fallback (local + Tailscale), real-time validation, test connection, enhanced QR scanner
 - [x] Connection status badge (green dot + route label)
 - [x] Pairing flow — UX feedback (banner, states, validation)
 - [x] Auto-connect on settings save
