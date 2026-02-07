@@ -7,6 +7,7 @@ class ConnectionBadge extends StatelessWidget {
   final String? errorMessage;
   final String? activeUrl;
   final bool nodePairingPending;
+  final int reconnectAttempts;
 
   const ConnectionBadge({
     super.key,
@@ -14,6 +15,7 @@ class ConnectionBadge extends StatelessWidget {
     this.errorMessage,
     this.activeUrl,
     this.nodePairingPending = false,
+    this.reconnectAttempts = 0,
   });
 
   String _urlLabel(String? url) {
@@ -45,12 +47,12 @@ class ConnectionBadge extends StatelessWidget {
       msg.GatewayConnectionState.disconnected => (
           Colors.grey,
           Icons.cloud_off,
-          'Disconnected'
+          reconnectAttempts > 0 ? 'Reconnecting ($reconnectAttempts)...' : 'Disconnected'
         ),
       msg.GatewayConnectionState.connecting => (
           Colors.orange,
           Icons.sync,
-          'Connecting...'
+          reconnectAttempts > 0 ? 'Reconnecting ($reconnectAttempts)...' : 'Connecting...'
         ),
       msg.GatewayConnectionState.authenticating => (
           Colors.amber,

@@ -41,6 +41,7 @@ class GatewayService extends ChangeNotifier {
   GatewayConfig? get activeConfig => _config;
   bool get isConnected => _state == msg.GatewayConnectionState.connected;
   List<msg.GatewayMessage> get messages => List.unmodifiable(_messages);
+  int get reconnectAttempts => _reconnectAttempts;
 
   bool _connecting = false;
 

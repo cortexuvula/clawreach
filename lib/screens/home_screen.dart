@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -10,11 +11,13 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/chat_message.dart';
 import '../models/gateway_config.dart';
 import '../models/message.dart' as msg;
 import '../services/canvas_service.dart';
 import '../services/capability_service.dart';
 import '../services/chat_service.dart';
+import '../services/connection_coordinator.dart';
 import '../services/gateway_service.dart';
 import '../services/hike_service.dart';
 import '../services/deep_link_service.dart';
@@ -179,30 +182,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   /// Connect operator first, then node — avoids double pairing requests.
   Future<void> _connectSequential(GatewayConfig config) async {
-    final gateway = context.read<GatewayService>();
-    final nodeConn = context.read<NodeConnectionService>();
-
-    // Connect operator (webchat) first
-    await gateway.connect(config);
+    final coordinator = context.read<ConnectionCoordinator>();
+    
+    // Use coordinator for proper sequencing
+    await coordinator.connectAll(config);
+    
+    // Probe capabilities after operator connects
     context.read<CapabilityService>().probe(config.url);
-
-    // Wait for operator to be fully connected before starting node
-    // This ensures the device is paired before node tries
-    if (gateway.isConnected) {
-      nodeConn.connect(config);
-      // Start foreground service to keep connection alive in background
-      ForegroundServiceManager.start();
-    } else {
-      // Listen for operator connection, then start node
-      void listener() {
-        if (gateway.isConnected) {
-          gateway.removeListener(listener);
-          nodeConn.connect(config);
-          ForegroundServiceManager.start();
-        }
-      }
-      gateway.addListener(listener);
-    }
+    
+    // Start foreground service to keep connection alive in background
+    ForegroundServiceManager.start();
   }
 
   void _onConfigSaved(GatewayConfig config) {
@@ -336,37 +325,181 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     }
 
-    if (transcript != null && transcript.isNotEmpty) {
-      debugPrint('🎤 Transcript: $transcript');
-      chat.sendMessage('🎤 $transcript');
-    } else if (!kIsWeb) {
-      // Final fallback: send as audio attachment (native only)
-      debugPrint('🎤 All transcription failed, sending as audio file');
-      final file = File(path);
-      await chat.sendFile(
-        file: file,
-        type: 'audio',
-        mimeType: 'audio/mp4',
-        duration: duration,
+    // Send audio message with transcript (if available) and audio attachment
+    await _sendAudioMessage(
+      path: path,
+      transcript: transcript,
+      duration: duration,
+      mimeType: kIsWeb ? 'audio/webm' : 'audio/mp4',
+    );
+    
+    _scrollToBottom();
+  }
+  
+  /// Send image file (works on both web and native platforms).
+  Future<void> _sendImageFile(XFile xfile, ChatService chat) async {
+    try {
+      Uint8List imageBytes;
+      String fileName;
+      
+      if (kIsWeb) {
+        // Web: Read bytes directly from XFile
+        debugPrint('📷 Reading image bytes from web picker...');
+        imageBytes = await xfile.readAsBytes();
+        fileName = xfile.name;
+        debugPrint('📷 Web image: ${imageBytes.length} bytes, name: $fileName');
+      } else {
+        // Native: Read from file path
+        final file = File(xfile.path);
+        if (!await file.exists()) {
+          throw Exception('Image file not found: ${xfile.path}');
+        }
+        imageBytes = await file.readAsBytes();
+        fileName = file.path.split('/').last;
+        debugPrint('📷 Native image: ${imageBytes.length} bytes');
+      }
+      
+      final mimeType = xfile.mimeType ?? 'image/jpeg';
+      final sizeKb = imageBytes.length / 1024;
+      debugPrint('📎 Sending image: $fileName (${sizeKb.toStringAsFixed(0)} KB, $mimeType)');
+
+      if (imageBytes.length > 5 * 1024 * 1024) {
+        throw Exception('File too large (${(imageBytes.length / 1024 / 1024).toStringAsFixed(1)} MB, max 5 MB)');
+      }
+
+      final b64 = base64Encode(imageBytes);
+      
+      chat.sendMessageWithAttachments(
+        text: '',
+        localAttachments: [
+          ChatAttachment(
+            type: 'image',
+            mimeType: mimeType,
+            fileName: fileName,
+            filePath: kIsWeb ? null : xfile.path,
+            bytes: imageBytes,
+            fileSize: imageBytes.length,
+          ),
+        ],
+        gatewayAttachments: [
+          {
+            'type': 'image',
+            'mimeType': mimeType,
+            'fileName': fileName,
+            'data': b64,
+          },
+        ],
       );
-    } else {
-      // Web: no transcription server or transcription failed
-      debugPrint('🎤 Web audio transcription unavailable or failed');
-      if (mounted) {
+      
+      debugPrint('📷 Image sent: ${imageBytes.length ~/ 1024}KB');
+    } catch (e, stack) {
+      debugPrint('❌ Error sending image: $e');
+      debugPrint('Stack: $stack');
+      rethrow; // Let caller handle error
+    }
+  }
+  
+  /// Send audio message with transcript and audio attachment.
+  Future<void> _sendAudioMessage({
+    required String path,
+    String? transcript,
+    Duration? duration,
+    required String mimeType,
+  }) async {
+    final chat = context.read<ChatService>();
+    
+    try {
+      Uint8List? audioBytes;
+      String? fileName;
+      
+      if (kIsWeb) {
+        // Web: Fetch blob data
+        debugPrint('🎤 Fetching blob for attachment: $path');
+        final response = await http.get(Uri.parse(path));
+        if (response.statusCode == 200) {
+          audioBytes = response.bodyBytes; // Already Uint8List
+          fileName = 'voice-${DateTime.now().millisecondsSinceEpoch}.webm';
+          debugPrint('🎤 Blob fetched: ${audioBytes.length} bytes');
+        } else {
+          debugPrint('⚠️ Failed to fetch blob: ${response.statusCode}');
+        }
+      } else {
+        // Native: Read file
+        final file = File(path);
+        if (await file.exists()) {
+          audioBytes = await file.readAsBytes(); // Returns Uint8List
+          fileName = file.path.split('/').last;
+          debugPrint('🎤 File read: ${audioBytes.length} bytes');
+        } else {
+          debugPrint('⚠️ Audio file not found: $path');
+        }
+      }
+      
+      if (audioBytes != null && audioBytes.isNotEmpty && fileName != null) {
+        // Send message with both transcript and audio attachment
+        final displayText = transcript != null && transcript.isNotEmpty
+            ? '🎤 $transcript'
+            : '🎤 Voice note';
+        
+        chat.sendMessageWithAttachments(
+          text: displayText,
+          localAttachments: [
+            ChatAttachment(
+              type: 'audio',
+              mimeType: mimeType,
+              fileName: fileName,
+              filePath: path,
+              bytes: audioBytes,
+              duration: duration,
+            ),
+          ],
+          gatewayAttachments: [
+            {
+              'type': 'audio',
+              'mimeType': mimeType,
+              'fileName': fileName,
+              'data': base64Encode(audioBytes),
+              if (duration != null) 'durationMs': duration.inMilliseconds,
+            },
+          ],
+        );
+        
+        debugPrint('🎤 Sent audio message: ${audioBytes.length ~/ 1024}KB, transcript: ${transcript?.substring(0, transcript.length.clamp(0, 40))}');
+      } else {
+        // Fallback: send transcript only if we have it
+        if (transcript != null && transcript.isNotEmpty) {
+          debugPrint('⚠️ Audio bytes unavailable, sending transcript only');
+          chat.sendMessage('🎤 $transcript');
+        } else {
+          debugPrint('❌ No audio bytes and no transcript');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('🎤 Failed to send audio'),
+                duration: Duration(seconds: 3),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        }
+      }
+    } catch (e, stack) {
+      debugPrint('❌ Error sending audio message: $e');
+      debugPrint('Stack: $stack');
+      
+      // Fallback: send transcript only if available
+      if (transcript != null && transcript.isNotEmpty) {
+        chat.sendMessage('🎤 $transcript');
+      } else if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              caps.hasTranscriptionServer
-                  ? '🎤 Transcription failed'
-                  : '🎤 No transcription server configured',
-            ),
+            content: Text('🎤 Error: ${e.toString()}'),
             duration: const Duration(seconds: 3),
             behavior: SnackBarBehavior.floating,
           ),
         );
       }
     }
-    _scrollToBottom();
   }
 
   /// Transcribe audio on-device using Android's speech recognition.
@@ -513,13 +646,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
 
       debugPrint('📷 Got image: ${xfile.path} (mime: ${xfile.mimeType})');
-      final file = File(xfile.path);
       final chat = context.read<ChatService>();
-      await chat.sendFile(
-        file: file,
-        type: 'image',
-        mimeType: xfile.mimeType ?? 'image/jpeg',
-      );
+      await _sendImageFile(xfile, chat);
       _scrollToBottom();
     } catch (e, stack) {
       debugPrint('❌ Image picker error: $e\n$stack');
@@ -600,13 +728,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
         final xfile = selected[i];
         debugPrint('📷 Sending image ${i + 1}/${selected.length}: ${xfile.path}');
-        final file = File(xfile.path);
-        await chat.sendFile(
-          file: file,
-          type: 'image',
-          mimeType: xfile.mimeType ?? 'image/jpeg',
-        );
-        sent++;
+        try {
+          await _sendImageFile(xfile, chat);
+          sent++;
+        } catch (e) {
+          debugPrint('❌ Failed to send image ${i + 1}: $e');
+          failed++;
+        }
 
         // Pace sends to avoid flooding gateway
         if (i < selected.length - 1) {
@@ -661,11 +789,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final isNodePairing = gateway.state == msg.GatewayConnectionState.connected && 
                           nodeConn.isPairingPending;
     
+    // Show reconnection attempts
+    final reconnecting = gateway.reconnectAttempts > 0;
+    final reconnectLabel = reconnecting ? ' (${gateway.reconnectAttempts})' : '';
+    
     final (color, label) = isNodePairing
         ? (Colors.orange, 'Device Pairing...')
         : switch (gateway.state) {
-            msg.GatewayConnectionState.disconnected => (Colors.grey, 'Offline'),
-            msg.GatewayConnectionState.connecting => (Colors.orange, 'Connecting...'),
+            msg.GatewayConnectionState.disconnected => (
+              Colors.grey, 
+              reconnecting ? 'Reconnecting$reconnectLabel...' : 'Offline'
+            ),
+            msg.GatewayConnectionState.connecting => (
+              Colors.orange, 
+              reconnecting ? 'Reconnecting$reconnectLabel...' : 'Connecting...'
+            ),
             msg.GatewayConnectionState.authenticating => (Colors.amber, 'Auth...'),
             msg.GatewayConnectionState.pairingPending => (Colors.blue, 'Pairing...'),
             msg.GatewayConnectionState.connected => (
@@ -802,6 +940,41 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 context,
                 MaterialPageRoute(builder: (_) => const HikeScreen()),
               ),
+            );
+          }),
+          // Manual reconnect button (show when disconnected/error)
+          Builder(builder: (ctx) {
+            final gateway = ctx.watch<GatewayService>();
+            final coordinator = ctx.watch<ConnectionCoordinator>();
+            final showReconnect = gateway.state == msg.GatewayConnectionState.disconnected ||
+                                   gateway.state == msg.GatewayConnectionState.error;
+            
+            if (!showReconnect) return const SizedBox.shrink();
+            
+            return IconButton(
+              icon: coordinator.isReconnecting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh),
+              tooltip: 'Reconnect',
+              onPressed: coordinator.isReconnecting
+                  ? null
+                  : () async {
+                      final config = gateway.activeConfig;
+                      if (config != null) {
+                        await coordinator.reconnect();
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('No config available. Please enter settings.'),
+                            duration: Duration(seconds: 3),
+                          ),
+                        );
+                      }
+                    },
             );
           }),
           IconButton(
@@ -1064,6 +1237,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           ],
         ],
+      ),
+      floatingActionButton: Consumer<CanvasService>(
+        builder: (context, canvas, _) {
+          // Show restore button when canvas is minimized
+          if (canvas.isMinimized) {
+            return FloatingActionButton.extended(
+              onPressed: () => canvas.restore(),
+              icon: const Icon(Icons.open_in_full),
+              label: const Text('Canvas'),
+              backgroundColor: Colors.deepPurple,
+              tooltip: 'Restore canvas',
+            );
+          }
+          return const SizedBox.shrink();
+        },
       ),
     );
   }

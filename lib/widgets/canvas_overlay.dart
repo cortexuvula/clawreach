@@ -136,6 +136,12 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  // Minimize button
+                  IconButton(
+                    icon: const Icon(Icons.minimize, color: Colors.white38, size: 18),
+                    onPressed: () => canvas.minimize(),
+                    tooltip: 'Minimize',
+                  ),
                   // Refresh button
                   IconButton(
                     icon: const Icon(Icons.refresh, color: Colors.white38, size: 18),

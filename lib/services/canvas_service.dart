@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'node_connection_service.dart';
 
 // Platform-specific imports
@@ -14,10 +15,15 @@ class CanvasService extends ChangeNotifier {
   final NodeConnectionService _nodeConnection;
 
   bool _visible = false;
+  bool _minimized = false; // New: minimized state (hidden but not closed)
   String? _currentUrl;
   String _pendingJsonl = '';
   WebViewController? _webViewController;
   bool _a2uiReady = false;
+  
+  static const _prefKeyCanvasUrl = 'canvas_last_url';
+  static const _prefKeyCanvasVisible = 'canvas_was_visible';
+  static const _prefKeyCanvasMinimized = 'canvas_minimized';
 
   CanvasService(this._nodeConnection) {
     _nodeConnection.registerHandler('canvas.present', _handlePresent);
@@ -28,16 +34,116 @@ class CanvasService extends ChangeNotifier {
     _nodeConnection.registerHandler('canvas.a2ui.push', _handleA2uiPushJsonl);
     _nodeConnection.registerHandler('canvas.a2ui.pushJSONL', _handleA2uiPushJsonl);
     _nodeConnection.registerHandler('canvas.a2ui.reset', _handleA2uiReset);
+    
+    // Listen for reconnection events to restore canvas state
+    _nodeConnection.addListener(_onNodeConnectionChanged);
+    
+    // Load persisted canvas state on init
+    _loadPersistedState();
+  }
+  
+  bool _wasVisibleBeforeDisconnect = false;
+  String? _lastUrlBeforeDisconnect;
+  
+  /// Load canvas state from SharedPreferences (survives app restart)
+  Future<void> _loadPersistedState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final wasVisible = prefs.getBool(_prefKeyCanvasVisible) ?? false;
+      final url = prefs.getString(_prefKeyCanvasUrl);
+      final wasMinimized = prefs.getBool(_prefKeyCanvasMinimized) ?? false;
+      
+      if (wasVisible && url != null && url.isNotEmpty) {
+        debugPrint('🖼️ Restoring canvas from storage: visible=$wasVisible, minimized=$wasMinimized, url=$url');
+        _currentUrl = url;
+        _visible = wasVisible;
+        _minimized = wasMinimized;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to load canvas state: $e');
+    }
+  }
+  
+  /// Persist canvas state to SharedPreferences
+  Future<void> _persistState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefKeyCanvasVisible, _visible);
+      await prefs.setString(_prefKeyCanvasUrl, _currentUrl ?? '');
+      await prefs.setBool(_prefKeyCanvasMinimized, _minimized);
+      debugPrint('💾 Canvas state persisted: visible=$_visible, minimized=$_minimized, url=$_currentUrl');
+    } catch (e) {
+      debugPrint('⚠️ Failed to persist canvas state: $e');
+    }
+  }
+  
+  void _onNodeConnectionChanged() {
+    final isConnected = _nodeConnection.isConnected;
+    
+    if (!isConnected) {
+      // Save state when disconnecting
+      _wasVisibleBeforeDisconnect = _visible;
+      _lastUrlBeforeDisconnect = _currentUrl;
+      debugPrint('🖼️ Canvas state saved: visible=$_wasVisibleBeforeDisconnect, url=$_lastUrlBeforeDisconnect');
+    } else if (_wasVisibleBeforeDisconnect && _lastUrlBeforeDisconnect != null) {
+      // Restore canvas after reconnection
+      debugPrint('🖼️ Restoring canvas: $_lastUrlBeforeDisconnect');
+      _currentUrl = _lastUrlBeforeDisconnect;
+      _visible = true;
+      _a2uiReady = false;
+      _wasVisibleBeforeDisconnect = false; // Clear saved state
+      _lastUrlBeforeDisconnect = null;
+      notifyListeners();
+    }
+  }
+  
+  @override
+  void dispose() {
+    _nodeConnection.removeListener(_onNodeConnectionChanged);
+    super.dispose();
   }
 
-  bool get isVisible => _visible;
+  bool get isVisible => _visible && !_minimized;
+  bool get isMinimized => _minimized;
   String? get currentUrl => _currentUrl;
 
   /// Hide canvas locally (user pressed close).
   void handleLocalHide() {
     _visible = false;
+    _minimized = false;
     _a2uiReady = false;
+    _persistState();
     notifyListeners();
+  }
+  
+  /// Minimize canvas (hide but keep state for quick restore)
+  void minimize() {
+    if (_visible) {
+      _minimized = true;
+      debugPrint('🖼️ Canvas minimized');
+      _persistState();
+      notifyListeners();
+    }
+  }
+  
+  /// Restore minimized canvas
+  void restore() {
+    if (_minimized) {
+      _minimized = false;
+      debugPrint('🖼️ Canvas restored');
+      _persistState();
+      notifyListeners();
+    }
+  }
+  
+  /// Toggle minimize/restore
+  void toggleMinimize() {
+    if (_minimized) {
+      restore();
+    } else {
+      minimize();
+    }
   }
 
   /// Set the WebView controller (called when WebView is created in the UI).
@@ -149,7 +255,9 @@ class CanvasService extends ChangeNotifier {
     _currentUrl = url ?? _buildA2uiUrl();
     debugPrint('🖼️ Canvas final URL: $_currentUrl');
     _visible = true;
+    _minimized = false;
     _a2uiReady = false;
+    _persistState(); // Persist canvas state
     notifyListeners();
 
     if (!kIsWeb) {
@@ -170,8 +278,10 @@ class CanvasService extends ChangeNotifier {
     String requestId, String command, Map<String, dynamic> params,
   ) async {
     _visible = false;
+    _minimized = false;
     _a2uiReady = false;
     debugPrint('🖼️ Canvas hide');
+    _persistState(); // Persist hidden state
     notifyListeners();
     return {'ok': true};
   }
@@ -187,11 +297,14 @@ class CanvasService extends ChangeNotifier {
     // Auto-show canvas if not visible
     if (!_visible) {
       _visible = true;
+      _minimized = false;
       debugPrint('🖼️ Canvas navigate (auto-showing): $url');
     } else {
       debugPrint('🖼️ Canvas navigate: $url');
     }
 
+    _persistState(); // Persist new URL and state
+    
     if (!kIsWeb && _webViewController != null) {
       await _webViewController!.loadRequest(Uri.parse(url));
     }
