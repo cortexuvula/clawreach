@@ -18,6 +18,8 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
   WebViewController? _controller; // Nullable for web platform
   String? _loadedUrl;
   bool _initialized = false;
+  bool _shouldLoad = false; // Lazy loading flag
+  bool _isLoading = false; // Loading state for spinner
   final GlobalKey<CanvasWebViewState> _webViewKey = GlobalKey();
 
   @override
@@ -80,8 +82,37 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
       if (_webViewKey.currentState != null) {
         canvas.registerWebViewState(_webViewKey.currentState);
       }
+      // Trigger load if canvas is already visible
+      if (canvas.isVisible && _loadedUrl != null) {
+        setState(() {
+          _shouldLoad = true;
+          _isLoading = true;
+        });
+      }
     });
     _initialized = true;
+  }
+
+  @override
+  void didUpdateWidget(CanvasOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final canvas = context.read<CanvasService>();
+    
+    // Trigger lazy load when canvas becomes visible
+    if (canvas.isVisible && !_shouldLoad && _loadedUrl != null) {
+      setState(() {
+        _shouldLoad = true;
+        _isLoading = true;
+      });
+    }
+    
+    // Clear load flag when canvas is hidden (not just minimized)
+    if (!canvas.isVisible && _shouldLoad) {
+      setState(() {
+        _shouldLoad = false;
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -106,10 +137,17 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
     if (_initialized && canvas.currentUrl != null && canvas.currentUrl != _loadedUrl) {
       _loadedUrl = canvas.currentUrl;
       if (kIsWeb) {
-        // For web, rebuild with new iframe
-        setState(() {});
+        // For web, rebuild with new iframe (will trigger lazy load if visible)
+        setState(() {
+          if (canvas.isVisible) {
+            _shouldLoad = true;
+            _isLoading = true;
+          }
+        });
       } else {
-        _controller?.loadRequest(Uri.parse(canvas.currentUrl!));
+        if (_controller != null && canvas.isVisible) {
+          _controller!.loadRequest(Uri.parse(canvas.currentUrl!));
+        }
       }
     }
 
@@ -171,7 +209,11 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
             Expanded(
               child: kIsWeb
                   ? _buildWebIframe()
-                  : WebViewWidget(controller: _controller!),
+                  : (_shouldLoad || !kIsWeb)
+                      ? WebViewWidget(controller: _controller!)
+                      : const Center(
+                          child: CircularProgressIndicator(),
+                        ),
             ),
           ],
         ),
@@ -189,12 +231,49 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
       );
     }
 
+    // Show loading indicator until iframe should load
+    if (!_shouldLoad) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
     // Use the conditionally imported CanvasWebView with message handling
     final canvas = context.read<CanvasService>();
-    return CanvasWebView(
-      key: _webViewKey,
-      url: _loadedUrl!,
-      onMessage: (message) => canvas.handleCanvasMessage(message),
+    return Stack(
+      children: [
+        CanvasWebView(
+          key: _webViewKey,
+          url: _loadedUrl!,
+          onMessage: (message) {
+            canvas.handleCanvasMessage(message);
+            // Clear loading state when canvas sends ready message
+            if (_isLoading && 
+                message is Map && 
+                message['type'] == 'ready') {
+              setState(() => _isLoading = false);
+            }
+          },
+        ),
+        // Show loading overlay until ready
+        if (_isLoading)
+          Container(
+            color: Colors.black.withValues(alpha: 0.7),
+            child: const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text(
+                    'Loading canvas...',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

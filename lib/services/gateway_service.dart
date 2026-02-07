@@ -176,6 +176,14 @@ class GatewayService extends ChangeNotifier {
     });
   }
 
+  /// Send an event to the gateway (e.g., typing indicators).
+  void sendEvent(Map<String, dynamic> payload) {
+    send({
+      'type': 'event',
+      'payload': payload,
+    });
+  }
+
   void _onMessage(dynamic data) {
     try {
       final json = jsonDecode(data as String) as Map<String, dynamic>;

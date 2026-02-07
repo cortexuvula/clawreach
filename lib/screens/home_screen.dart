@@ -56,6 +56,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Timer? _recordingTimer;
   bool _hasText = false;
 
+  // Typing indicator debounce
+  Timer? _typingDebounce;
+  bool _sentTypingIndicator = false;
+
   @override
   void initState() {
     super.initState();
@@ -71,6 +75,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _deepLinkService.dispose();
     _recordingTimer?.cancel();
+    _typingDebounce?.cancel();
     _focusNode.removeListener(_onFocusChange);
     _focusNode.dispose();
     _textController.removeListener(_onTextChanged);
@@ -129,8 +134,48 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _onTextChanged() {
     final hasText = _textController.text.trim().isNotEmpty;
+    
+    // Send typing indicator on first keystroke (leading edge)
+    if (hasText && !_sentTypingIndicator) {
+      _sendTypingIndicator(true);
+      _sentTypingIndicator = true;
+    }
+    
+    // Debounce the "stopped typing" signal
+    _typingDebounce?.cancel();
+    if (hasText) {
+      _typingDebounce = Timer(const Duration(milliseconds: 500), () {
+        if (_sentTypingIndicator) {
+          _sendTypingIndicator(false);
+          _sentTypingIndicator = false;
+        }
+      });
+    } else {
+      // Clear immediately when text is deleted
+      if (_sentTypingIndicator) {
+        _sendTypingIndicator(false);
+        _sentTypingIndicator = false;
+      }
+    }
+    
+    // UI state update
     if (hasText != _hasText) {
       setState(() => _hasText = hasText);
+    }
+  }
+
+  void _sendTypingIndicator(bool isTyping) {
+    try {
+      final gateway = context.read<GatewayService>();
+      if (gateway.isConnected) {
+        gateway.sendEvent({
+          'type': 'typing',
+          'isTyping': isTyping,
+        });
+        debugPrint('⌨️ Typing indicator: $isTyping');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to send typing indicator: $e');
     }
   }
 
@@ -1143,6 +1188,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       controller: _scrollController,
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       itemCount: chat.messages.length,
+                      // Performance optimizations for long message lists
+                      cacheExtent: 500, // Only cache ~2-3 screens worth of messages
+                      addAutomaticKeepAlives: false, // Don't keep invisible items alive
+                      addRepaintBoundaries: true, // Isolate repaints per message
                       itemBuilder: (context, index) {
                         return ChatBubble(message: chat.messages[index]);
                       },
