@@ -9,12 +9,18 @@ import 'gateway_service.dart';
 class ChatService extends ChangeNotifier {
   final GatewayService _gateway;
   static const _uuid = Uuid();
+  dynamic _notificationService; // NotificationService reference
 
   final List<ChatMessage> _messages = [];
   String? _activeRunId;
 
   ChatService(this._gateway) {
     _gateway.addListener(_onGatewayChanged);
+  }
+
+  /// Set notification service reference
+  void setNotificationService(dynamic notificationService) {
+    _notificationService = notificationService;
   }
 
   List<ChatMessage> get messages => List.unmodifiable(_messages);
@@ -117,6 +123,12 @@ class ChatService extends ChangeNotifier {
             state: ChatMessageState.complete,
           ));
         }
+        
+        // Notify if message completed
+        if (text.isNotEmpty && !isNoReply) {
+          _notifyMessage('Fred 🦊', text);
+        }
+        
         notifyListeners();
         break;
 
@@ -246,6 +258,19 @@ class ChatService extends ChangeNotifier {
         },
       ],
     );
+  }
+
+  /// Helper to show message notification if backgrounded
+  void _notifyMessage(String senderName, String text) {
+    if (_notificationService != null) {
+      try {
+        // Truncate preview to 150 chars
+        final preview = text.length > 150 ? '${text.substring(0, 150)}...' : text;
+        (_notificationService as dynamic).notifyMessage(senderName, preview);
+      } catch (e) {
+        debugPrint('⚠️ Failed to send message notification: $e');
+      }
+    }
   }
 
   @override

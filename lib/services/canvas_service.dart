@@ -14,6 +14,7 @@ import 'canvas_service_stub.dart'
 /// Manages a WebView that renders the A2UI interface.
 class CanvasService extends ChangeNotifier {
   final NodeConnectionService _nodeConnection;
+  dynamic _notificationService; // NotificationService reference
 
   bool _visible = false;
   bool _minimized = false; // New: minimized state (hidden but not closed)
@@ -262,6 +263,10 @@ class CanvasService extends ChangeNotifier {
     _minimized = false;
     _a2uiReady = false;
     _persistState(); // Persist canvas state
+    
+    // Notify if backgrounded
+    _notifyCanvasUpdate('Canvas Ready', 'Fred opened a canvas for you');
+    
     notifyListeners();
 
     if (!kIsWeb) {
@@ -404,6 +409,10 @@ class CanvasService extends ChangeNotifier {
       _currentUrl = _buildA2uiUrl();
       _visible = true;
       _a2uiReady = false;
+      
+      // Notify if backgrounded
+      _notifyCanvasUpdate('Canvas Update', 'Fred updated the canvas');
+      
       notifyListeners();
 
       if (!kIsWeb) {
@@ -655,6 +664,22 @@ class CanvasService extends ChangeNotifier {
         (_canvasWebViewState as dynamic).sendMessage(message);
       } catch (e) {
         debugPrint('❌ Failed to send message to canvas: $e');
+      }
+    }
+  }
+
+  /// Set notification service reference
+  void setNotificationService(dynamic notificationService) {
+    _notificationService = notificationService;
+  }
+
+  /// Helper to show canvas notification if backgrounded
+  void _notifyCanvasUpdate(String title, String description) {
+    if (_notificationService != null) {
+      try {
+        (_notificationService as dynamic).notifyCanvasUpdate(title, description);
+      } catch (e) {
+        debugPrint('⚠️ Failed to send canvas notification: $e');
       }
     }
   }

@@ -47,6 +47,10 @@ void main() async {
   // Wire raw gateway messages to chat service
   gateway.onRawMessage = chat.handleGatewayMessage;
   
+  // Wire notification service to chat and canvas
+  chat.setNotificationService(notifications);
+  canvasService.setNotificationService(notifications);
+  
   // Wire gateway connection to capability probing
   gateway.onConnected = (url) {
     debugPrint('🔍 Gateway connected, probing capabilities...');

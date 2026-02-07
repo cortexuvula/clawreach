@@ -10,9 +10,16 @@ class NotificationService extends ChangeNotifier {
       FlutterLocalNotificationsPlugin();
   bool _initialized = false;
   int _notificationId = 0;
+  bool _isBackgrounded = false;
 
   NotificationService(this._nodeConnection) {
     _nodeConnection.registerHandler('system.notify', _handleNotify);
+  }
+  
+  /// Update background state
+  void setBackgrounded(bool backgrounded) {
+    _isBackgrounded = backgrounded;
+    debugPrint('🔔 Notification service: backgrounded=$backgrounded');
   }
 
   bool get isInitialized => _initialized;
@@ -91,5 +98,62 @@ class NotificationService extends ChangeNotifier {
     );
 
     return {'delivered': true};
+  }
+
+  /// Show notification for new chat message (when backgrounded)
+  Future<void> notifyMessage(String senderName, String preview) async {
+    if (!_initialized || !_isBackgrounded) return;
+
+    debugPrint('🔔 Message notification: $senderName - $preview');
+
+    final androidDetails = AndroidNotificationDetails(
+      'clawreach_messages',
+      'Messages',
+      channelDescription: 'New messages from Fred',
+      importance: Importance.high,
+      priority: Priority.high,
+      playSound: true,
+      enableVibration: true,
+      styleInformation: BigTextStyleInformation(preview),
+    );
+
+    final details = NotificationDetails(android: androidDetails);
+
+    _notificationId++;
+    await _notifications.show(
+      _notificationId,
+      senderName,
+      preview,
+      details,
+      payload: 'message:new',
+    );
+  }
+
+  /// Show notification for canvas update (when backgrounded)
+  Future<void> notifyCanvasUpdate(String title, String description) async {
+    if (!_initialized || !_isBackgrounded) return;
+
+    debugPrint('🔔 Canvas notification: $title');
+
+    final androidDetails = AndroidNotificationDetails(
+      'clawreach_canvas',
+      'Canvas Updates',
+      channelDescription: 'Canvas and A2UI updates',
+      importance: Importance.high,
+      priority: Priority.high,
+      playSound: true,
+      enableVibration: true,
+    );
+
+    final details = NotificationDetails(android: androidDetails);
+
+    _notificationId++;
+    await _notifications.show(
+      _notificationId,
+      title,
+      description,
+      details,
+      payload: 'canvas:update',
+    );
   }
 }

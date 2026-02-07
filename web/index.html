@@ -37,12 +37,35 @@
 </head>
 <body>
   <script>
-    // Service Worker registration for PWA offline support
+    // Service Worker registration for PWA offline support and push notifications
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('flutter_service_worker.js?v='+Date.now())
-          .then((reg) => console.log('✅ Service Worker registered'))
-          .catch((err) => console.warn('⚠️ Service Worker failed:', err));
+      window.addEventListener('load', async () => {
+        try {
+          // Register our custom service worker with notification support
+          const reg = await navigator.serviceWorker.register('/sw.js');
+          console.log('✅ Service Worker registered:', reg.scope);
+
+          // Request notification permission if not already granted
+          if (Notification.permission === 'default') {
+            const permission = await Notification.requestPermission();
+            console.log('🔔 Notification permission:', permission);
+          }
+
+          // Subscribe to push notifications if permission granted
+          if (Notification.permission === 'granted') {
+            try {
+              const subscription = await reg.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: null // Would use VAPID key in production
+              });
+              console.log('🔔 Push subscription:', subscription);
+            } catch (err) {
+              console.log('ℹ️ Push subscription not available (requires HTTPS + VAPID key)');
+            }
+          }
+        } catch (err) {
+          console.warn('⚠️ Service Worker registration failed:', err);
+        }
       });
     }
   </script>

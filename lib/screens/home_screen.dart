@@ -23,6 +23,7 @@ import '../services/hike_service.dart';
 import '../services/deep_link_service.dart';
 import '../services/foreground_service.dart';
 import '../services/node_connection_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/canvas_overlay.dart';
 import '../widgets/chat_bubble.dart';
 import 'hike_screen.dart';
@@ -82,10 +83,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final gateway = context.read<GatewayService>();
     final nodeConn = context.read<NodeConnectionService>();
+    final notifications = context.read<NotificationService>();
 
     switch (state) {
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
+        // Notify notification service app is backgrounded
+        notifications.setBackgrounded(true);
+        
         // If foreground service is running, keep connections alive
         if (ForegroundServiceManager.isRunning) {
           debugPrint('💤 App backgrounded — foreground service active, keeping connections');
@@ -100,6 +105,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         break;
       case AppLifecycleState.resumed:
         debugPrint('☀️ App foregrounded — resuming connections');
+        
+        // Notify notification service app is foregrounded
+        notifications.setBackgrounded(false);
+        
         gateway.setBackgrounded(false);
         nodeConn.setBackgrounded(false);
         if (ForegroundServiceManager.isRunning) {
