@@ -7,7 +7,7 @@ import 'node_connection_service.dart';
 // Platform-specific imports
 import 'package:webview_flutter/webview_flutter.dart'
     if (dart.library.html) 'package:webview_flutter/webview_flutter.dart';
-import 'canvas_service_stub.dart'
+import 'canvas_service_stub.dart' as canvas_platform
     if (dart.library.html) 'canvas_service_web.dart';
 
 /// Handles canvas.* commands from the gateway.
@@ -332,7 +332,7 @@ class CanvasService extends ChangeNotifier {
     if (kIsWeb) {
       // On web, use postMessage bridge to eval in iframe
       try {
-        final result = await CanvasWebBridge.eval(js);
+        final result = await canvas_platform.CanvasWebBridge.eval(js);
         return {'result': result};
       } catch (e) {
         throw Exception('Canvas eval failed: $e');
@@ -358,7 +358,7 @@ class CanvasService extends ChangeNotifier {
     if (kIsWeb) {
       // On web, use postMessage bridge to snapshot iframe
       try {
-        final result = await CanvasWebBridge.snapshot(
+        final result = await canvas_platform.CanvasWebBridge.snapshot(
           format: format,
           quality: quality.toDouble(),
         );
@@ -445,7 +445,7 @@ class CanvasService extends ChangeNotifier {
 
     if (kIsWeb) {
       // On web, use postMessage to reset
-      window.postMessage({'type': 'openclaw-a2ui-reset'}, '*');
+      canvas_platform.window.postMessage({'type': 'openclaw-a2ui-reset'}, '*');
     } else if (_webViewController != null) {
       await _webViewController!.runJavaScript('''
         (() => {
@@ -539,7 +539,7 @@ class CanvasService extends ChangeNotifier {
       try {
         // Parse the messages to send as structured data
         final messages = jsonDecode(messagesJson);
-        window.postMessage({
+        canvas_platform.window.postMessage({
           'type': 'openclaw-a2ui-push',
           'messages': messages,
         }, '*');
@@ -604,7 +604,7 @@ class CanvasService extends ChangeNotifier {
         // Response to a command (eval/snapshot)
         final requestId = message['requestId'] as String?;
         if (requestId != null) {
-          CanvasWebBridge.handleResponse(
+          canvas_platform.CanvasWebBridge.handleResponse(
             requestId,
             message['result'],
             message['error'] as String?,
