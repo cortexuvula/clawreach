@@ -41,18 +41,31 @@ class ForegroundServiceManager {
   static Future<bool> start() async {
     if (_running) return true;
 
+    debugPrint('🔧 Starting foreground service...');
+
     // Request notification permission (Android 13+)
     final notifPermission =
         await FlutterForegroundTask.checkNotificationPermission();
+    debugPrint('🔧 Notification permission: $notifPermission');
     if (notifPermission != NotificationPermission.granted) {
-      await FlutterForegroundTask.requestNotificationPermission();
+      debugPrint('🔧 Requesting notification permission...');
+      final granted = await FlutterForegroundTask.requestNotificationPermission();
+      debugPrint('🔧 Notification permission granted: $granted');
+      if (granted != NotificationPermission.granted) {
+        debugPrint('❌ Notification permission denied - cannot start service');
+        return false;
+      }
     }
 
     // Check battery optimization exemption
-    if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
+    final isBatteryOptimized = await FlutterForegroundTask.isIgnoringBatteryOptimizations;
+    debugPrint('🔧 Battery optimization exemption: $isBatteryOptimized');
+    if (!isBatteryOptimized) {
+      debugPrint('🔧 Requesting battery optimization exemption...');
       await FlutterForegroundTask.requestIgnoreBatteryOptimization();
     }
 
+    debugPrint('🔧 Attempting to start service...');
     final result = await FlutterForegroundTask.startService(
       notificationTitle: 'ClawReach connected',
       notificationText: 'Maintaining gateway connection',
@@ -62,10 +75,10 @@ class ForegroundServiceManager {
 
     if (result is ServiceRequestSuccess) {
       _running = true;
-      debugPrint('🔧 Foreground service started');
+      debugPrint('✅ Foreground service started successfully');
       return true;
     } else {
-      debugPrint('🔧 Foreground service failed to start: $result');
+      debugPrint('❌ Foreground service failed to start: $result');
       return false;
     }
   }

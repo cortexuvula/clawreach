@@ -536,11 +536,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: ForegroundServiceManager.isRunning,
             onChanged: (v) async {
               if (v) {
-                await ForegroundServiceManager.start();
+                final success = await ForegroundServiceManager.start();
+                if (!success && mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Failed to start background service. Grant notification and battery optimization permissions.'),
+                      duration: Duration(seconds: 5),
+                    ),
+                  );
+                }
               } else {
                 await ForegroundServiceManager.stop();
               }
-              setState(() {});
+              if (mounted) setState(() {});
             },
           ),
 
