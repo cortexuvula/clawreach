@@ -3,19 +3,44 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
 import 'node_connection_service.dart';
 
+// Conditional imports for web support
+import 'location_service_stub.dart'
+    if (dart.library.html) 'location_service_web.dart';
+
 /// Handles location.get commands from the gateway.
+/// Uses geolocator on mobile, Geolocation API on web.
 class LocationService extends ChangeNotifier {
   final NodeConnectionService _nodeConnection;
   bool _initialized = false;
+  
+  // Web service (only initialized on web platform)
+  dynamic _webService;
 
   LocationService(this._nodeConnection) {
     _nodeConnection.registerHandler('location.get', _handleLocationGet);
+    
+    // Initialize web service if on web
+    if (kIsWeb) {
+      _webService = LocationServiceStub(); // Will be LocationServiceWeb on web
+    }
   }
 
   bool get isInitialized => _initialized;
 
   /// Check and request location permissions.
   Future<void> init() async {
+    if (kIsWeb) {
+      // Initialize web location service
+      if (_webService != null) {
+        await _webService.init();
+        _initialized = _webService.isInitialized;
+        debugPrint('📍 Web location service initialized');
+        notifyListeners();
+      }
+      return;
+    }
+    
+    // Mobile location initialization
     final status = await Permission.location.status;
     if (!status.isGranted) {
       await Permission.location.request();
@@ -27,6 +52,18 @@ class LocationService extends ChangeNotifier {
 
   /// Handle location.get command from gateway.
   Future<Map<String, dynamic>> _handleLocationGet(
+    String requestId, String command, Map<String, dynamic> params,
+  ) async {
+    if (kIsWeb && _webService != null) {
+      return await _webService.handleLocationGet(requestId, command, params);
+    }
+    
+    // Mobile location implementation
+    return await _handleMobileLocationGet(requestId, command, params);
+  }
+
+  /// Mobile location.get implementation using geolocator.
+  Future<Map<String, dynamic>> _handleMobileLocationGet(
     String requestId, String command, Map<String, dynamic> params,
   ) async {
     final desiredAccuracy = params['desiredAccuracy'] as String? ?? 'balanced';
@@ -93,5 +130,13 @@ class LocationService extends ChangeNotifier {
       'headingDegrees': position.heading,
       'timestamp': position.timestamp.toIso8601String(),
     };
+  }
+
+  @override
+  void dispose() {
+    if (_webService != null) {
+      _webService.dispose();
+    }
+    super.dispose();
   }
 }

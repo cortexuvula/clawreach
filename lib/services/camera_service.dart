@@ -7,16 +7,29 @@ import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'node_connection_service.dart';
 
+// Conditional imports for web support
+import 'camera_service_stub.dart'
+    if (dart.library.html) 'camera_service_web.dart';
+
 /// Handles camera.snap and camera.list commands from the gateway.
+/// Uses native camera on mobile, getUserMedia on web.
 class CameraService extends ChangeNotifier {
   final NodeConnectionService _nodeConnection;
   List<CameraDescription> _cameras = [];
   bool _initialized = false;
+  
+  // Web service (only initialized on web platform)
+  dynamic _webService;
 
   CameraService(this._nodeConnection) {
     // Register command handlers
     _nodeConnection.registerHandler('camera.snap', _handleSnap);
     _nodeConnection.registerHandler('camera.list', _handleList);
+    
+    // Initialize web service if on web
+    if (kIsWeb) {
+      _webService = CameraServiceStub(); // Will be CameraServiceWeb on web
+    }
   }
 
   bool get isInitialized => _initialized;
@@ -24,6 +37,18 @@ class CameraService extends ChangeNotifier {
 
   /// Initialize available cameras.
   Future<void> init() async {
+    if (kIsWeb) {
+      // Initialize web camera service
+      if (_webService != null) {
+        await _webService.init();
+        _initialized = _webService.isInitialized;
+        debugPrint('📷 Web camera service initialized');
+        notifyListeners();
+      }
+      return;
+    }
+    
+    // Mobile camera initialization
     try {
       _cameras = await availableCameras();
       _initialized = _cameras.isNotEmpty;
@@ -41,6 +66,10 @@ class CameraService extends ChangeNotifier {
   Future<Map<String, dynamic>> _handleList(
     String requestId, String command, Map<String, dynamic> params,
   ) async {
+    if (kIsWeb && _webService != null) {
+      return await _webService.handleList(requestId, command, params);
+    }
+    
     final cameraList = _cameras.map((c) => {
       'id': c.name,
       'facing': c.lensDirection == CameraLensDirection.front ? 'front' : 'back',
@@ -52,6 +81,18 @@ class CameraService extends ChangeNotifier {
 
   /// Handle camera.snap command.
   Future<Map<String, dynamic>> _handleSnap(
+    String requestId, String command, Map<String, dynamic> params,
+  ) async {
+    if (kIsWeb && _webService != null) {
+      return await _webService.handleSnap(requestId, command, params);
+    }
+    
+    // Mobile camera snap implementation
+    return await _handleMobileSnap(requestId, command, params);
+  }
+
+  /// Mobile camera snap implementation.
+  Future<Map<String, dynamic>> _handleMobileSnap(
     String requestId, String command, Map<String, dynamic> params,
   ) async {
     // Check permission
@@ -138,6 +179,9 @@ class CameraService extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_webService != null) {
+      _webService.dispose();
+    }
     super.dispose();
   }
 }
