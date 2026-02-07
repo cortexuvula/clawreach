@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/gateway_config.dart';
@@ -29,6 +30,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _nameController;
   bool _autoReconnect = true;
   bool _obscureToken = true;
+  
+  // Validation state
+  String? _urlError;
+  String? _fallbackUrlError;
+  String? _tokenError;
+  String? _nameError;
+  
+  // Test connection state
+  bool _isTesting = false;
+  String? _testResult;
 
   @override
   void initState() {
@@ -57,14 +68,73 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
-  String? _validateUrl(String url) {
-    if (url.isEmpty) return 'URL is required';
-    final uri = Uri.tryParse(url);
-    if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
-      return 'Enter a valid URL (e.g. ws://192.168.1.100:18789)';
+  String? _validateUrl(String url, {bool required = true}) {
+    if (url.trim().isEmpty) {
+      return required ? 'URL is required' : null;
     }
+    
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      return 'Invalid URL format';
+    }
+    
+    if (!uri.hasScheme) {
+      return 'URL must include protocol (ws:// or wss://)';
+    }
+    
+    if (uri.scheme != 'ws' && uri.scheme != 'wss') {
+      return 'Protocol must be ws:// or wss://';
+    }
+    
+    if (!uri.hasAuthority) {
+      return 'URL must include host (e.g. 192.168.1.100:18789)';
+    }
+    
+    if (!uri.hasPort) {
+      return 'URL must include port (e.g. :18789)';
+    }
+    
     return null;
   }
+  
+  String? _validateToken(String token) {
+    if (token.trim().isEmpty) {
+      return 'Gateway token is required';
+    }
+    
+    if (token.length < 10) {
+      return 'Token seems too short (need full token)';
+    }
+    
+    return null;
+  }
+  
+  String? _validateName(String name) {
+    if (name.trim().isEmpty) {
+      return 'Node name is required';
+    }
+    
+    if (name.length > 50) {
+      return 'Name too long (max 50 characters)';
+    }
+    
+    return null;
+  }
+  
+  void _validateAll() {
+    setState(() {
+      _urlError = _validateUrl(_urlController.text);
+      _fallbackUrlError = _validateUrl(_fallbackUrlController.text, required: false);
+      _tokenError = _validateToken(_tokenController.text);
+      _nameError = _validateName(_nameController.text);
+    });
+  }
+  
+  bool get _hasErrors => 
+      _urlError != null || 
+      _fallbackUrlError != null || 
+      _tokenError != null || 
+      _nameError != null;
 
   Future<void> _discoverGateway() async {
     final result = await showDialog<DiscoveredGateway>(
@@ -72,11 +142,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (ctx) => const _DiscoveryDialog(),
     );
     if (result != null && mounted) {
-      _urlController.text = result.wsUrl;
+      setState(() {
+        _urlController.text = result.wsUrl;
+        _urlError = _validateUrl(result.wsUrl);
+        _testResult = null;
+      });
+      
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Found gateway: ${result.wsUrl}'),
-          duration: const Duration(seconds: 2),
+          content: Text('✅ Found: ${result.wsUrl}'),
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'Test',
+            onPressed: _testConnection,
+          ),
         ),
       );
     }
@@ -88,34 +167,109 @@ class _SettingsScreenState extends State<SettingsScreen> {
       MaterialPageRoute(builder: (_) => const QrScanScreen()),
     );
     if (config != null && mounted) {
-      _urlController.text = config.url;
-      _fallbackUrlController.text = config.fallbackUrl ?? '';
-      _tokenController.text = config.token;
-      _nameController.text = config.nodeName;
+      setState(() {
+        _urlController.text = config.url;
+        _fallbackUrlController.text = config.fallbackUrl ?? '';
+        _tokenController.text = config.token;
+        _nameController.text = config.nodeName;
+        
+        // Validate imported config
+        _validateAll();
+        _testResult = null;
+      });
+      
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('QR code scanned — review settings and tap Save'),
-          duration: Duration(seconds: 3),
+        SnackBar(
+          content: const Text('✅ QR code scanned — review settings below'),
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'Test',
+            onPressed: _testConnection,
+          ),
         ),
       );
     }
   }
 
-  Future<void> _save() async {
-    final url = _urlController.text.trim();
-    final token = _tokenController.text.trim();
-
-    // Validate
-    final urlError = _validateUrl(url);
-    if (urlError != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(urlError), backgroundColor: Colors.red[700]),
-      );
+  Future<void> _testConnection() async {
+    _validateAll();
+    if (_hasErrors) {
+      setState(() {
+        _testResult = '❌ Fix validation errors first';
+      });
       return;
     }
-    if (token.isEmpty) {
+    
+    setState(() {
+      _isTesting = true;
+      _testResult = null;
+    });
+    
+    final url = _urlController.text.trim();
+    
+    try {
+      debugPrint('🧪 Testing connection to: $url');
+      
+      // Try to connect with timeout
+      final socket = await WebSocket.connect(
+        url,
+        headers: {'Authorization': 'Bearer ${_tokenController.text.trim()}'},
+      ).timeout(const Duration(seconds: 5));
+      
+      // Connection successful
+      debugPrint('✅ Connection test succeeded');
+      setState(() {
+        _testResult = '✅ Connection successful!';
+        _isTesting = false;
+      });
+      
+      // Close the socket
+      await socket.close();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Connection successful!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } on TimeoutException {
+      debugPrint('❌ Connection test timed out');
+      setState(() {
+        _testResult = '❌ Connection timed out (5s)';
+        _isTesting = false;
+      });
+    } on SocketException catch (e) {
+      debugPrint('❌ Socket error: $e');
+      setState(() {
+        _testResult = '❌ Cannot reach gateway';
+        _isTesting = false;
+      });
+    } on WebSocketException catch (e) {
+      debugPrint('❌ WebSocket error: $e');
+      setState(() {
+        _testResult = '❌ WebSocket error: ${e.message}';
+        _isTesting = false;
+      });
+    } catch (e) {
+      debugPrint('❌ Connection test failed: $e');
+      setState(() {
+        _testResult = '❌ Connection failed: $e';
+        _isTesting = false;
+      });
+    }
+  }
+  
+  Future<void> _save() async {
+    _validateAll();
+    if (_hasErrors) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Gateway token is required'), backgroundColor: Colors.red[700]),
+        const SnackBar(
+          content: Text('Please fix validation errors'),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }
@@ -161,6 +315,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // Quick setup help
+          Card(
+            color: Colors.blue.withValues(alpha: 0.05),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, size: 20, color: Colors.blue[700]),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Use QR code or network discovery for quick setup',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.blue[700],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          
           // Quick setup buttons
           Row(
             children: [
@@ -169,6 +347,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onPressed: _scanQrCode,
                   icon: const Icon(Icons.qr_code_scanner),
                   label: const Text('Scan QR'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -177,11 +358,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onPressed: _discoverGateway,
                   icon: const Icon(Icons.wifi_find),
                   label: const Text('Discover'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
 
           // Local URL
           const Text('Local URL (WiFi)',
@@ -189,31 +373,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 4),
           TextField(
             controller: _urlController,
-            decoration: const InputDecoration(
-              hintText: 'ws://your-gateway-ip:port',
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.wifi),
-              helperText: 'Tried first — fast on local network',
+            decoration: InputDecoration(
+              hintText: 'ws://192.168.1.100:18789',
+              border: const OutlineInputBorder(),
+              prefixIcon: const Icon(Icons.wifi),
+              helperText: _urlError == null ? 'Tried first — fast on local network' : null,
+              errorText: _urlError,
             ),
             keyboardType: TextInputType.url,
             autocorrect: false,
+            onChanged: (value) {
+              setState(() {
+                _urlError = _validateUrl(value);
+                _testResult = null; // Clear test result on change
+              });
+            },
           ),
           const SizedBox(height: 20),
 
           // Fallback URL
-          const Text('Fallback URL (Tailscale)',
+          const Text('Fallback URL (Tailscale) - Optional',
               style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 4),
           TextField(
             controller: _fallbackUrlController,
-            decoration: const InputDecoration(
-              hintText: 'ws://hostname.your-tailnet.ts.net:port',
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.vpn_lock),
-              helperText: 'Used when local is unreachable (cellular/remote)',
+            decoration: InputDecoration(
+              hintText: 'wss://hostname.your-tailnet.ts.net:443',
+              border: const OutlineInputBorder(),
+              prefixIcon: const Icon(Icons.vpn_lock),
+              helperText: _fallbackUrlError == null ? 'Used when local is unreachable (cellular/remote)' : null,
+              errorText: _fallbackUrlError,
             ),
             keyboardType: TextInputType.url,
             autocorrect: false,
+            onChanged: (value) {
+              setState(() {
+                _fallbackUrlError = _validateUrl(value, required: false);
+              });
+            },
           ),
           const SizedBox(height: 20),
 
@@ -233,9 +430,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onPressed: () =>
                     setState(() => _obscureToken = !_obscureToken),
               ),
+              errorText: _tokenError,
             ),
             obscureText: _obscureToken,
             autocorrect: false,
+            onChanged: (value) {
+              setState(() {
+                _tokenError = _validateToken(value);
+                _testResult = null; // Clear test result on change
+              });
+            },
           ),
           const SizedBox(height: 20),
 
@@ -245,12 +449,76 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 4),
           TextField(
             controller: _nameController,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               hintText: 'ClawReach',
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.smartphone),
+              border: const OutlineInputBorder(),
+              prefixIcon: const Icon(Icons.smartphone),
+              helperText: _nameError == null ? 'How this device appears in gateway' : null,
+              errorText: _nameError,
+            ),
+            onChanged: (value) {
+              setState(() {
+                _nameError = _validateName(value);
+              });
+            },
+          ),
+          const SizedBox(height: 24),
+
+          // Test Connection Button
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: _isTesting ? null : _testConnection,
+              icon: _isTesting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.wifi_tethering),
+              label: Text(_isTesting ? 'Testing connection...' : 'Test Connection'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _testResult?.startsWith('✅') ?? false
+                    ? Colors.green
+                    : null,
+              ),
             ),
           ),
+          
+          // Test result
+          if (_testResult != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _testResult!.startsWith('✅')
+                    ? Colors.green.withValues(alpha: 0.1)
+                    : Colors.red.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _testResult!.startsWith('✅')
+                      ? Colors.green
+                      : Colors.red,
+                  width: 1,
+                ),
+              ),
+              child: Text(
+                _testResult!,
+                style: TextStyle(
+                  color: _testResult!.startsWith('✅')
+                      ? Colors.green[700]
+                      : Colors.red[700],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+          
           const SizedBox(height: 20),
 
           // Auto-reconnect
