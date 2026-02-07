@@ -19,6 +19,7 @@
 - [ ] Handle canvas overlay dismiss/re-show properly on navigation
 - [ ] Screen recording capability (advertise to gateway)
 - [ ] Microphone permission + voice note support
+- [ ] VAPID keys for production web push notifications
 
 ## Done
 - [x] Ed25519 crypto, WebSocket gateway, auto-reconnect
@@ -26,7 +27,7 @@
 - [x] Dual WebSocket (operator + node)
 - [x] Chat interface with streaming
 - [x] Camera (front/back snap)
-- [x] Push notifications
+- [x] Push notifications (enhanced with canvas alerts, message alerts, service workers)
 - [x] Location sharing
 - [x] Canvas/A2UI WebView integration + JS bridge
 - [x] Canvas postMessage bridge for web (bidirectional communication, eval/snapshot support)
