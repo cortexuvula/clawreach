@@ -313,9 +313,11 @@ class ChatService extends ChangeNotifier {
   void _notifyMessage(String senderName, String text) {
     if (_notificationService != null) {
       try {
-        // Truncate preview to 150 chars
-        final preview = text.length > 150 ? '${text.substring(0, 150)}...' : text;
-        (_notificationService as dynamic).notifyMessage(senderName, preview);
+        // Add small delay to ensure lifecycle state has updated
+        Future.delayed(const Duration(milliseconds: 100), () {
+          final preview = text.length > 150 ? '${text.substring(0, 150)}...' : text;
+          (_notificationService as dynamic).notifyMessage(senderName, preview);
+        });
       } catch (e) {
         debugPrint('⚠️ Failed to send message notification: $e');
       }

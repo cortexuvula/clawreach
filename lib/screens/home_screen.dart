@@ -94,6 +94,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     switch (state) {
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
+        debugPrint('🔄 App lifecycle: BACKGROUNDED (${state.name})');
         // Notify notification service app is backgrounded
         notifications.setBackgrounded(true);
         
@@ -110,6 +111,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         }
         break;
       case AppLifecycleState.resumed:
+        debugPrint('🔄 App lifecycle: FOREGROUNDED (${state.name})');
         debugPrint('☀️ App foregrounded — resuming connections');
         
         // Notify notification service app is foregrounded

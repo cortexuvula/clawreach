@@ -102,9 +102,18 @@ class NotificationService extends ChangeNotifier {
 
   /// Show notification for new chat message (when backgrounded)
   Future<void> notifyMessage(String senderName, String preview) async {
-    if (!_initialized || !_isBackgrounded) return;
+    // Don't notify if not initialized or app is in foreground
+    if (!_initialized) {
+      debugPrint('🔔 Skipping notification: not initialized');
+      return;
+    }
+    
+    if (!_isBackgrounded) {
+      debugPrint('🔔 Skipping notification: app is foregrounded (bg=$_isBackgrounded)');
+      return;
+    }
 
-    debugPrint('🔔 Message notification: $senderName - $preview');
+    debugPrint('🔔 Showing message notification: $senderName - $preview (bg=$_isBackgrounded)');
 
     final androidDetails = AndroidNotificationDetails(
       'clawreach_messages',
