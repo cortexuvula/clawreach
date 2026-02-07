@@ -371,7 +371,11 @@ class ChatService extends ChangeNotifier {
       params['attachments'] = gatewayAttachments;
     }
 
-    await _gateway.sendOperatorRequest('chat', 'agent.run', params);
+    _gateway.sendRequest(
+      method: 'chat.send',
+      id: 'queued-${DateTime.now().millisecondsSinceEpoch}',
+      params: params,
+    );
     debugPrint('✅ Sent queued message');
   }
 

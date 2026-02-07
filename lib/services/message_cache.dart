@@ -70,15 +70,16 @@ class MessageCache {
           ),
           attachments: (map['attachments'] as List<dynamic>?)?.map((a) {
             final aMap = a as Map<String, dynamic>;
+            final durationMs = aMap['duration'] as int?;
             return ChatAttachment(
               type: aMap['type'] as String,
               mimeType: aMap['mimeType'] as String,
               fileName: aMap['fileName'] as String,
               filePath: aMap['filePath'] as String?,
               bytes: null, // Not cached (too large)
-              duration: aMap['duration'] as int?,
+              duration: durationMs != null ? Duration(milliseconds: durationMs) : null,
             );
-          }).toList(),
+          }).toList() ?? [],
         );
       }).toList();
 

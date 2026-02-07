@@ -275,11 +275,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     final config = GatewayConfig(
-      url: url,
+      url: _urlController.text.trim(),
       fallbackUrl: _fallbackUrlController.text.trim().isEmpty
           ? null
           : _fallbackUrlController.text.trim(),
-      token: token,
+      token: _tokenController.text.trim(),
       nodeName: _nameController.text.trim(),
       autoReconnect: _autoReconnect,
     );
