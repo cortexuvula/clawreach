@@ -250,7 +250,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await coordinator.connectAll(config);
     
     // Probe capabilities after operator connects
-    context.read<CapabilityService>().probe(config.url);
+    if (mounted) {
+      context.read<CapabilityService>().probe(config.url);
+    }
     
   }
 
@@ -349,7 +351,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _recordingStart = null;
     });
 
-    if (path == null) return;
+    if (path == null || !mounted) return;
 
     final caps = context.read<CapabilityService>();
     String? transcript;
@@ -688,6 +690,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         }
       }
 
+      if (!mounted) return;
       final caps = context.read<CapabilityService>();
       final maxDim = caps.maxImageDimension.toDouble();
       final quality = caps.imageQuality;
@@ -705,6 +708,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
 
       debugPrint('📷 Got image: ${xfile.path} (mime: ${xfile.mimeType})');
+      if (!mounted) return;
       final chat = context.read<ChatService>();
       await _sendImageFile(xfile, chat);
       _scrollToBottom();
@@ -750,6 +754,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
 
       debugPrint('📷 Selected ${selected.length} image(s)');
+      if (!mounted) return;
       final chat = context.read<ChatService>();
 
       // Wait for gateway connection before starting

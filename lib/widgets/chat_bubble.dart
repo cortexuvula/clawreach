@@ -74,6 +74,7 @@ class ChatBubble extends StatelessWidget {
                           File(att.filePath!),
                           width: double.infinity,
                           fit: BoxFit.cover,
+                          // ignore: unnecessary_underscores
                           errorBuilder: (_, __, ___) => _brokenImage(),
                         )
                       : att.bytes != null
@@ -81,6 +82,7 @@ class ChatBubble extends StatelessWidget {
                               att.bytes!,
                               width: double.infinity,
                               fit: BoxFit.cover,
+                              // ignore: unnecessary_underscores
                               errorBuilder: (_, __, ___) => _brokenImage(),
                             )
                           : _brokenImage(),
@@ -251,12 +253,15 @@ class ChatBubble extends StatelessWidget {
           }
           break;
         case 'select':
-          _showSelectableText(context);
+          if (context.mounted) {
+            _showSelectableText(context);
+          }
           break;
         case 'share_text':
           Share.share(message.text);
           break;
         case 'share_media':
+          if (!context.mounted) break;
           final files = <XFile>[];
           for (final att in message.attachments) {
             if (att.filePath != null) {

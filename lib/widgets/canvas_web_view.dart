@@ -1,6 +1,7 @@
 // Web-specific canvas implementation using iframes with postMessage bridge
 import 'dart:async';
 import 'dart:ui_web' as ui_web;
+// ignore: deprecated_member_use, avoid_web_libraries_in_flutter
 import 'dart:html' as html;
 import 'dart:convert';
 import 'package:flutter/material.dart';

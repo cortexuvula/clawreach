@@ -1,4 +1,5 @@
 // Web-specific implementation for canvas service using postMessage
+// ignore: deprecated_member_use, avoid_web_libraries_in_flutter
 import 'dart:html' show window;
 import 'dart:async';
 import 'dart:convert';
