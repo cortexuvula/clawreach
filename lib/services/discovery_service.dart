@@ -197,7 +197,9 @@ class DiscoveryService {
         // Skip loopback and docker/virtual interfaces
         if (iface.name.startsWith('lo') ||
             iface.name.startsWith('docker') ||
-            iface.name.startsWith('veth')) continue;
+            iface.name.startsWith('veth')) {
+          continue;
+        }
         for (final addr in iface.addresses) {
           if (!addr.isLoopback) {
             return addr.address;

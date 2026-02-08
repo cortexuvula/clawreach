@@ -23,7 +23,6 @@ class NodeConnectionService extends ChangeNotifier {
 
   WebSocketChannel? _channel;
   bool _connected = false;
-  String? _activeUrl;
   String? _nodeId;
   Timer? _reconnectTimer;
   GatewayConfig? _config;
@@ -71,7 +70,7 @@ class NodeConnectionService extends ChangeNotifier {
       debugPrint('🔌 [Node] Trying local: $localWs');
 
       if (await _tryConnect(localWs, config.localTimeoutMs)) {
-        _activeUrl = config.url;
+        
         return;
       }
 
@@ -79,7 +78,7 @@ class NodeConnectionService extends ChangeNotifier {
         final fallbackWs = config.fallbackWsUrl!;
         debugPrint('🔌 [Node] Trying fallback: $fallbackWs');
         if (await _tryConnect(fallbackWs, 10000)) {
-          _activeUrl = config.fallbackUrl;
+          
           return;
         }
       }
@@ -123,7 +122,7 @@ class NodeConnectionService extends ChangeNotifier {
     final old = _channel;
     _channel = null;
     _connected = false;
-    _activeUrl = null;
+    
     try {
       await old?.sink.close();
     } catch (_) {}
@@ -343,7 +342,7 @@ class NodeConnectionService extends ChangeNotifier {
         'id': requestId,
         'nodeId': _nodeId ?? '',
         'ok': ok,
-        if (payload != null) 'payload': payload,
+        'payload': payload,
         if (error != null) 'error': {'code': 'ERROR', 'message': error},
       },
     });
@@ -375,7 +374,7 @@ class NodeConnectionService extends ChangeNotifier {
     }
     debugPrint('🔌 [Node] WebSocket closed');
     _connected = false;
-    _activeUrl = null;
+    
     notifyListeners();
     _scheduleReconnect();
   }

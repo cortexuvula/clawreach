@@ -24,11 +24,6 @@ class LocationServiceWeb extends ChangeNotifier {
 
     debugPrint('📍 Web location requested: accuracy=$desiredAccuracy timeout=${timeoutMs}ms');
 
-    // Check if geolocation is available
-    if (html.window.navigator.geolocation == null) {
-      throw Exception('Geolocation not supported in this browser');
-    }
-
     // Map accuracy to enableHighAccuracy
     final enableHighAccuracy = switch (desiredAccuracy) {
       'precise' => true,
@@ -37,32 +32,28 @@ class LocationServiceWeb extends ChangeNotifier {
       _ => true,
     };
 
-    final options = {
-      'enableHighAccuracy': enableHighAccuracy,
-      'timeout': timeoutMs.toInt(),
-      'maximumAge': maxAgeMs?.toInt() ?? 0,
-    };
-
     try {
-      final position = await html.window.navigator.geolocation!
-          .getCurrentPosition(
+      final position = await html.window.navigator.geolocation.getCurrentPosition(
             enableHighAccuracy: enableHighAccuracy,
             timeout: Duration(milliseconds: timeoutMs.toInt()),
             maximumAge: Duration(milliseconds: maxAgeMs?.toInt() ?? 0),
           );
 
-      final coords = position.coords!;
+      final coords = position.coords;
       
-      debugPrint('📍 Got position: ${coords.latitude},${coords.longitude} '
-          '±${coords.accuracy}m');
+      final lat = coords?.latitude ?? 0.0;
+      final lon = coords?.longitude ?? 0.0;
+      final accuracy = coords?.accuracy ?? 0.0;
+      
+      debugPrint('📍 Got position: $lat,$lon ±${accuracy}m');
 
       return {
-        'lat': coords.latitude,
-        'lon': coords.longitude,
-        'accuracyMeters': coords.accuracy,
-        'altitudeMeters': coords.altitude ?? 0.0,
-        'speedMps': coords.speed ?? 0.0,
-        'headingDegrees': coords.heading ?? 0.0,
+        'lat': lat,
+        'lon': lon,
+        'accuracyMeters': accuracy,
+        'altitudeMeters': coords?.altitude ?? 0.0,
+        'speedMps': coords?.speed ?? 0.0,
+        'headingDegrees': coords?.heading ?? 0.0,
         'timestamp': DateTime.fromMillisecondsSinceEpoch(
           position.timestamp ?? DateTime.now().millisecondsSinceEpoch
         ).toIso8601String(),

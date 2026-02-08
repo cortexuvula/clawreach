@@ -1,4 +1,5 @@
 // Web-specific canvas implementation using iframes with postMessage bridge
+import 'dart:async';
 import 'dart:ui_web' as ui_web;
 import 'dart:html' as html;
 import 'dart:convert';
@@ -23,7 +24,7 @@ class CanvasWebView extends StatefulWidget {
 
 class CanvasWebViewState extends State<CanvasWebView> {
   html.IFrameElement? _iframe;
-  html.Subscription? _messageSubscription;
+  StreamSubscription<html.MessageEvent>? _messageSubscription;
 
   @override
   void initState() {

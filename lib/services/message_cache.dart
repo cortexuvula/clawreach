@@ -26,7 +26,7 @@ class MessageCache {
         'text': msg.text,
         'timestamp': msg.timestamp.toIso8601String(),
         'state': msg.state.name,
-        'attachments': msg.attachments?.map((a) => {
+        'attachments': msg.attachments.map((a) => {
           'type': a.type,
           'mimeType': a.mimeType,
           'fileName': a.fileName,

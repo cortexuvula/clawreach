@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:html' as html;
-import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 
 /// Web-specific camera service using getUserMedia API.

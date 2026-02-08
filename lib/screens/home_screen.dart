@@ -351,7 +351,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     if (path == null) return;
 
-    final chat = context.read<ChatService>();
     final caps = context.read<CapabilityService>();
     String? transcript;
 
@@ -692,7 +691,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final caps = context.read<CapabilityService>();
       final maxDim = caps.maxImageDimension.toDouble();
       final quality = caps.imageQuality;
-      debugPrint('📷 Picking image from ${source.name} (max ${maxDim.toInt()}px, ${quality}% quality)...');
+      debugPrint('📷 Picking image from ${source.name} (max ${maxDim.toInt()}px, $quality% quality)...');
       final xfile = await _imagePicker.pickImage(
         source: source,
         maxWidth: maxDim,
@@ -727,7 +726,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final caps = context.read<CapabilityService>();
       final maxDim = caps.maxImageDimension.toDouble();
       final quality = caps.imageQuality;
-      debugPrint('📷 Opening multi-image picker (max ${maxDim.toInt()}px, ${quality}% quality)...');
+      debugPrint('📷 Opening multi-image picker (max ${maxDim.toInt()}px, $quality% quality)...');
       final xfiles = await _imagePicker.pickMultiImage(
         maxWidth: maxDim,
         maxHeight: maxDim,

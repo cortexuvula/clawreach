@@ -14,7 +14,6 @@ class ConnectionCoordinator extends ChangeNotifier {
   bool _isReconnecting = false;
   Timer? _reconnectTimer;
   int _reconnectAttempts = 0;
-  static const _maxBackoffMs = 60000; // 60s cap
   
   ConnectionCoordinator(this._gateway, this._node) {
     // Listen to gateway disconnections to trigger coordinated reconnect

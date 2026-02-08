@@ -104,7 +104,7 @@ class _ActivityMapState extends State<ActivityMap> {
           onMapReady: () {
             // Fit bounds after map is fully ready + laid out
             if (bounds != null) {
-              _fitBounds(bounds!);
+              _fitBounds(bounds);
             }
           },
         ),

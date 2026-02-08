@@ -1,5 +1,5 @@
 // Web-specific implementation for canvas service using postMessage
-import 'dart:html' show window, MessageEvent;
+import 'dart:html' show window;
 import 'dart:async';
 import 'dart:convert';
 

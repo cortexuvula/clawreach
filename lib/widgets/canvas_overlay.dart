@@ -248,9 +248,7 @@ class _CanvasOverlayState extends State<CanvasOverlay> {
           onMessage: (message) {
             canvas.handleCanvasMessage(message);
             // Clear loading state when canvas sends ready message
-            if (_isLoading && 
-                message is Map && 
-                message['type'] == 'ready') {
+            if (_isLoading && message['type'] == 'ready') {
               setState(() => _isLoading = false);
             }
           },
