@@ -57,6 +57,7 @@ class ChatService extends ChangeNotifier {
     // Load cached messages when session key becomes available
     if (_gateway.isConnected && _gateway.mainSessionKey != null && !_cacheLoaded) {
       _loadCachedMessages();
+      _fetchSessionHistory();
     }
     
     // Process queued messages when connection is restored
@@ -83,6 +84,81 @@ class ChatService extends ChangeNotifier {
     }
   }
 
+  /// Fetch full session history from gateway
+  void _fetchSessionHistory() {
+    final sk = _gateway.mainSessionKey;
+    if (sk == null) return;
+
+    debugPrint('📜 Requesting session history from gateway...');
+    
+    final requestId = _uuid.v4();
+    
+    // Send request for session history
+    _gateway.sendRequest(
+      method: 'sessions.history',
+      id: requestId,
+      params: {
+        'sessionKey': sk,
+        'limit': 50, // Last 50 messages
+      },
+    );
+  }
+
+  /// Handle session history response from gateway
+  void _handleHistoryResponse(Map<String, dynamic> payload) {
+    final messages = payload['messages'] as List<dynamic>? ?? [];
+    
+    debugPrint('📜 Received ${messages.length} messages from session history');
+    
+    final List<ChatMessage> historyMessages = [];
+    
+    for (final msg in messages) {
+      final msgMap = msg as Map<String, dynamic>;
+      final role = msgMap['role'] as String? ?? '';
+      final content = msgMap['content'] as List<dynamic>? ?? [];
+      final timestamp = msgMap['timestamp'];
+      
+      // Extract text from content
+      String text = '';
+      for (final item in content) {
+        final itemMap = item as Map<String, dynamic>;
+        final type = itemMap['type'] as String?;
+        if (type == 'text') {
+          text += itemMap['text'] as String? ?? '';
+        }
+      }
+      
+      if (text.isEmpty) continue;
+      
+      // Create ChatMessage
+      historyMessages.add(ChatMessage(
+        id: msgMap['id'] as String? ?? _uuid.v4(),
+        role: role,
+        text: text,
+        timestamp: timestamp is int 
+            ? DateTime.fromMillisecondsSinceEpoch(timestamp)
+            : DateTime.tryParse(timestamp.toString()) ?? DateTime.now(),
+        state: ChatMessageState.complete,
+      ));
+    }
+    
+    // Merge with existing messages, avoiding duplicates
+    final existingIds = _messages.map((m) => m.id).toSet();
+    final newMessages = historyMessages.where((m) => !existingIds.contains(m.id)).toList();
+    
+    if (newMessages.isNotEmpty) {
+      // Add new messages at the beginning (they're older)
+      _messages.insertAll(0, newMessages);
+      // Sort by timestamp to maintain order
+      _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      notifyListeners();
+      debugPrint('✅ Merged ${newMessages.length} history messages');
+      
+      // Cache the updated message list
+      cacheMessages();
+    }
+  }
+
   /// Process outbound message queue
   Future<void> _processQueue() async {
     await _messageQueue.processQueue((queuedMsg) async {
@@ -99,6 +175,12 @@ class ChatService extends ChangeNotifier {
       final event = json['event'] as String? ?? '';
       if (event == 'chat') {
         _handleChatEvent(json['payload'] as Map<String, dynamic>? ?? {});
+      }
+    } else if (type == 'res') {
+      // Handle response to our requests
+      final payload = json['payload'] as Map<String, dynamic>?;
+      if (payload != null && payload.containsKey('messages')) {
+        _handleHistoryResponse(payload);
       }
     }
   }
