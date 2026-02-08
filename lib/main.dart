@@ -74,6 +74,8 @@ void main() async {
     await notifications.init();
     await location.init();
     ForegroundServiceManager.init();
+    // Wire foreground service to gateway/node for auto-reconnection
+    ForegroundServiceManager.setServices(gateway, nodeConnection);
   } else {
     debugPrint('🖥️ Desktop/Web — skipping camera, notifications, location init');
   }

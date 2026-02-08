@@ -119,6 +119,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         
         gateway.setBackgrounded(false);
         nodeConn.setBackgrounded(false);
+        
+        // Force reconnect if disconnected (app may have been killed)
+        if (!gateway.isConnected) {
+          final config = gateway.activeConfig;
+          if (config != null) {
+            debugPrint('🔄 Gateway disconnected, reconnecting...');
+            gateway.connect(config);
+          }
+        }
+        
+        if (!nodeConn.isConnected) {
+          final config = nodeConn.activeConfig;
+          if (config != null) {
+            debugPrint('🔄 Node disconnected, reconnecting...');
+            nodeConn.connect(config);
+          }
+        }
         if (ForegroundServiceManager.isRunning) {
           ForegroundServiceManager.updateNotification(
             text: 'Maintaining gateway connection',

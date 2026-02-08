@@ -28,7 +28,7 @@ class ForegroundServiceManager {
         playSound: false,
       ),
       foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.repeat(60000),
+        eventAction: ForegroundTaskEventAction.repeat(30000), // 30s for faster reconnection
         autoRunOnBoot: false,
         autoRunOnMyPackageReplaced: false,
         allowWakeLock: true,
@@ -102,6 +102,12 @@ class ForegroundServiceManager {
       notificationText: text ?? 'Maintaining gateway connection',
     );
   }
+
+  /// Set gateway/node services for reconnection from service isolate
+  static void setServices(dynamic gateway, dynamic nodeConnection) {
+    _ConnectionTaskHandler._gateway = gateway;
+    _ConnectionTaskHandler._nodeConnection = nodeConnection;
+  }
 }
 
 // This must be a top-level function for the isolate callback
@@ -111,9 +117,12 @@ void _startCallback() {
 }
 
 /// Task handler running in the foreground service.
-/// The actual WebSocket is maintained by the main app — this service
-/// just keeps the process alive and prevents Android from killing it.
+/// Periodically checks connection status and attempts reconnection if needed.
 class _ConnectionTaskHandler extends TaskHandler {
+  // Static references to services for reconnection
+  static dynamic _gateway;
+  static dynamic _nodeConnection;
+
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     debugPrint('🔧 [FG] Task started at $timestamp by $starter');
@@ -121,9 +130,36 @@ class _ConnectionTaskHandler extends TaskHandler {
 
   @override
   void onRepeatEvent(DateTime timestamp) {
-    // Periodic heartbeat — keeps the service alive.
-    // The main app handles actual WebSocket connection.
+    // Periodic heartbeat — check and reconnect if needed
     debugPrint('🔧 [FG] Heartbeat at $timestamp');
+    
+    try {
+      // Attempt gateway reconnection if disconnected
+      if (_gateway != null) {
+        final isConnected = (_gateway as dynamic).isConnected as bool?;
+        if (isConnected == false) {
+          debugPrint('🔧 [FG] Gateway disconnected, attempting reconnect...');
+          final config = (_gateway as dynamic).activeConfig;
+          if (config != null) {
+            (_gateway as dynamic).connect(config);
+          }
+        }
+      }
+      
+      // Attempt node reconnection if disconnected
+      if (_nodeConnection != null) {
+        final isConnected = (_nodeConnection as dynamic).isConnected as bool?;
+        if (isConnected == false) {
+          debugPrint('🔧 [FG] Node disconnected, attempting reconnect...');
+          final config = (_nodeConnection as dynamic).activeConfig;
+          if (config != null) {
+            (_nodeConnection as dynamic).connect(config);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('🔧 [FG] Reconnect attempt failed: $e');
+    }
   }
 
   @override
