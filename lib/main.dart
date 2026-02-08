@@ -8,6 +8,7 @@ import 'services/canvas_service.dart';
 import 'services/chat_service.dart';
 import 'services/connection_coordinator.dart';
 import 'services/crypto_service.dart';
+import 'services/fcm_service.dart';
 import 'services/gateway_service.dart';
 import 'services/location_service.dart';
 import 'services/node_connection_service.dart';
@@ -25,6 +26,11 @@ bool get isMobilePlatform =>
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize FCM (before other services)
+  if (isMobilePlatform) {
+    await FcmService.init();
+  }
 
   // Initialize crypto (load or generate Ed25519 keys)
   final crypto = CryptoService();
@@ -50,6 +56,16 @@ void main() async {
   // Wire notification service to chat and canvas
   chat.setNotificationService(notifications);
   canvasService.setNotificationService(notifications);
+  
+  // Register FCM token refresh callback
+  if (isMobilePlatform) {
+    FcmService.onTokenRefresh = (newToken) {
+      if (gateway.isConnected) {
+        // Token will be registered in next connection via _handleConnectOk
+        debugPrint('🔔 FCM token refreshed, will register on next connection');
+      }
+    };
+  }
   
   // Wire gateway connection to capability probing
   gateway.onConnected = (url) {

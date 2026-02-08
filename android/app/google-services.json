@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "546571548627",
+    "project_id": "clawreach-85b11",
+    "storage_bucket": "clawreach-85b11.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:546571548627:android:e0d5bd4be0e5b22a9d2126",
+        "android_client_info": {
+          "package_name": "org.clawreach.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBwD1eMwXmpTjXGwZ53vVJ_bTxVnPx4cZE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

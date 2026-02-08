@@ -3,11 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/gateway_config.dart';
 import '../models/message.dart' as msg;
 import 'crypto_service.dart';
+import 'fcm_service.dart';
+import '../main.dart' show isMobilePlatform;
 
 /// Manages WebSocket connection to OpenClaw gateway with smart URL fallback.
 class GatewayService extends ChangeNotifier {
@@ -311,6 +314,50 @@ class GatewayService extends ChangeNotifier {
     // Notify listeners (e.g., for capability probing)
     if (onConnected != null && _config != null) {
       onConnected!(_config!.url);
+    }
+    
+    // Register FCM token with gateway
+    _registerFcmToken();
+  }
+  
+  /// Register FCM token with FCM bridge for push notifications
+  Future<void> _registerFcmToken() async {
+    // Only on mobile platforms
+    if (!isMobilePlatform) return;
+    
+    final token = FcmService.fcmToken;
+    if (token == null) {
+      debugPrint('⚠️ No FCM token available yet');
+      return;
+    }
+
+    debugPrint('🔔 Registering FCM token with FCM bridge');
+    
+    try {
+      // Send to FCM bridge HTTP endpoint
+      final deviceId = await _crypto.getPublicKeyHex(); // Use our device ID
+      final platform = Platform.isAndroid ? 'android' : 'ios';
+      
+      // TODO: Make this URL configurable (use gateway host)
+      final bridgeUrl = 'http://localhost:8015/register';
+      
+      final response = await http.post(
+        Uri.parse(bridgeUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'deviceId': deviceId,
+          'token': token,
+          'platform': platform,
+        }),
+      );
+      
+      if (response.statusCode == 200) {
+        debugPrint('✅ FCM token registered successfully');
+      } else {
+        debugPrint('⚠️ FCM registration failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to register FCM token: $e');
     }
   }
 
