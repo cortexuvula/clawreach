@@ -1,7 +1,6 @@
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/material.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:provider/provider.dart';
 import 'services/camera_service.dart';
 import 'services/canvas_service.dart';
@@ -14,7 +13,6 @@ import 'services/location_service.dart';
 import 'services/node_connection_service.dart';
 import 'services/notification_service.dart';
 import 'services/cached_tile_provider.dart';
-import 'services/foreground_service.dart';
 import 'services/hike_service.dart';
 import 'services/network_monitor_service.dart';
 import 'services/capability_service.dart';
@@ -89,9 +87,6 @@ void main() async {
     await camera.init();
     await notifications.init();
     await location.init();
-    ForegroundServiceManager.init();
-    // Wire foreground service to gateway/node for auto-reconnection
-    ForegroundServiceManager.setServices(gateway, nodeConnection);
   } else {
     debugPrint('🖥️ Desktop/Web — skipping camera, notifications, location init');
   }
