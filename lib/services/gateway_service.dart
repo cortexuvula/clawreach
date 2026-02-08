@@ -338,8 +338,19 @@ class GatewayService extends ChangeNotifier {
       final deviceId = await _crypto.getPublicKeyHex(); // Use our device ID
       final platform = Platform.isAndroid ? 'android' : 'ios';
       
-      // TODO: Make this URL configurable (use gateway host)
-      final bridgeUrl = 'http://localhost:8015/register';
+      // Derive FCM bridge URL from gateway URL
+      String bridgeUrl = 'http://localhost:8015/register'; // Default fallback
+      if (_activeUrl != null) {
+        try {
+          final uri = Uri.parse(_activeUrl!);
+          final host = uri.host;
+          // Use same host as gateway, but port 8015 for FCM bridge
+          bridgeUrl = 'http://$host:8015/register';
+          debugPrint('🔔 Using FCM bridge at $bridgeUrl (derived from gateway $host)');
+        } catch (e) {
+          debugPrint('⚠️ Failed to parse gateway URL, using localhost fallback');
+        }
+      }
       
       final response = await http.post(
         Uri.parse(bridgeUrl),
