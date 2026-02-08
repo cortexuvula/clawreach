@@ -1,34 +1,46 @@
 # ClawReach 🦊📱
 
-A Flutter mobile client for [OpenClaw](https://github.com/openclaw/openclaw) — connect your phone as a node with chat, camera, voice notes, fitness tracking, and smart home integration.
+A Flutter mobile client for [OpenClaw](https://github.com/openclaw/openclaw) — connect your phone as a node with chat, camera, voice notes, fitness tracking, smart home integration, and offline push notifications.
 
 ## Features
 
 ### Chat
-- Real-time chat with your OpenClaw AI assistant
-- Voice notes with automatic transcription (server-side or on-device fallback)
-- Photo sharing — camera or gallery (single + multi-select up to 10)
-- Long-press context menu: copy, select text, share media
-- Streaming message display with typing indicators
+- **Real-time chat** with your OpenClaw AI assistant
+- **Push notifications** - Receive notifications when app is closed (FCM)
+- **Session history syncing** - Full conversation history from all clients (webchat, Signal, etc.)
+- **Offline message cache** - Last 100 messages cached locally for offline viewing
+- **Voice notes** with automatic transcription (server-side or on-device fallback)
+- **Photo sharing** — camera or gallery (single + multi-select up to 10)
+- **Long-press context menu** - copy, select text, share media
+- **Streaming message display** with typing indicators
+- **Message queue** - Send messages while offline, auto-deliver when reconnected
+
+### Push Notifications (v1.1.0+)
+- **Firebase Cloud Messaging (FCM)** integration for reliable offline delivery
+- **Background notifications** - Receive messages when app is killed/swiped away
+- **Smart delivery** - Only sends push when ClawReach is offline
+- **Auto-reconnect** - Tap notification to open app and resume conversation
+- **Full history on open** - See complete conversation context from notification
 
 ### Fitness Tracker
-- GPS activity tracking: Hike, Run, Walk, Bike, Ski, Swim, Kayak, Other
-- One-tap start from activity card grid
-- Live stats: distance, duration, pace, speed
-- Auto GPX export on stop with Android share sheet
-- Mini map preview (non-interactive) + tap for full detail view
-- Background tracking — chat while recording
-- Offline-first: works without cell reception
-- Activity sync to gateway on completion (or queued for later)
+- **GPS activity tracking** - Hike, Run, Walk, Bike, Ski, Swim, Kayak, Other
+- **One-tap start** from activity card grid
+- **Live stats** - distance, duration, pace, speed
+- **Auto GPX export** on stop with Android share sheet
+- **Mini map preview** (non-interactive) + tap for full detail view
+- **Background tracking** — chat while recording
+- **Offline-first** - works without cell reception
+- **Activity sync** to gateway on completion (or queued for later)
 
 ### Node Capabilities
-- Ed25519 challenge-response authentication
-- Device pairing with approval flow
-- Camera snap (front/back)
-- Canvas/A2UI rendering via WebView
-- Location sharing
-- Push notifications
-- Auto-reconnect with backoff
+- **Ed25519 challenge-response authentication**
+- **Device pairing** with approval flow
+- **Camera snap** (front/back)
+- **Canvas/A2UI rendering** via WebView (with postMessage bridge for web platform)
+- **Location sharing**
+- **Push notifications** via FCM
+- **Auto-reconnect** with exponential backoff
+- **Session history fetching** - Sync messages from other clients on connect
 
 ### Compatibility
 ClawReach auto-detects server capabilities and degrades gracefully:
@@ -38,9 +50,25 @@ ClawReach auto-detects server capabilities and degrades gracefully:
 | Photos | Full quality (1920px/80%) | Auto-compressed (800px/50%) to fit 512KB WebSocket limit |
 | Voice notes | Server transcription (faster-whisper) | Audio attachment fallback |
 | Fitness sync | Agent logs activity | Silent skip (data saved locally) |
+| Push notifications | FCM bridge required | Skipped gracefully |
+| Session history | Full sync | Cached messages only |
 | Chat | Full featured | Full featured |
 
 > **Note:** [PR #6805](https://github.com/openclaw/openclaw/pull/6805) increases the gateway WebSocket payload limit to 6MB, enabling full-quality photo support on vanilla installs.
+
+## What's New in v1.1.2
+
+### 🎉 Session History Fetching
+- **Full conversation sync** - ClawReach now fetches the last 50 messages from the gateway when connecting
+- **Cross-client visibility** - See messages sent from webchat, Signal, and other clients
+- **Smart merging** - Deduplicates and sorts messages chronologically with local cache
+- **Complete context** - Tap a notification and see the full conversation thread
+
+### Technical Improvements
+- Uses `sessions.history` WebSocket request to gateway
+- Merges server history with offline cache on every connect
+- Maintains chronological order across all message sources
+- Automatic deduplication by message ID
 
 ## Architecture
 
@@ -53,16 +81,19 @@ lib/
 │   ├── message.dart                   # Gateway event models
 │   └── hike_track.dart                # Fitness activity data + GPX
 ├── services/
-│   ├── gateway_service.dart           # WebSocket connection (chat)
+│   ├── gateway_service.dart           # WebSocket connection (chat + history fetching)
 │   ├── node_connection_service.dart   # WebSocket connection (node)
 │   ├── crypto_service.dart            # Ed25519 key management
-│   ├── chat_service.dart              # Chat state + file sending
+│   ├── chat_service.dart              # Chat state, history sync, file sending
 │   ├── capability_service.dart        # Server feature detection
+│   ├── message_cache.dart             # Offline message persistence (SharedPreferences)
+│   ├── message_queue.dart             # Offline message queue
+│   ├── fcm_service.dart               # Firebase Cloud Messaging integration
 │   ├── hike_service.dart              # GPS tracking + activity storage
-│   ├── camera_service.dart            # Camera snap handling
+│   ├── camera_service.dart            # Camera snap handling (mobile + web)
 │   ├── canvas_service.dart            # Canvas/A2UI rendering
-│   ├── location_service.dart          # Location sharing
-│   ├── notification_service.dart      # Push notifications
+│   ├── location_service.dart          # Location sharing (mobile + web)
+│   ├── notification_service.dart      # Local notifications
 │   └── cached_tile_provider.dart      # Offline map tile cache
 ├── screens/
 │   ├── home_screen.dart               # Main chat + media UI
@@ -71,7 +102,7 @@ lib/
 └── widgets/
     ├── chat_bubble.dart               # Message bubble + context menu
     ├── activity_map.dart              # Map with GPS trail overlay
-    ├── canvas_overlay.dart            # A2UI canvas WebView
+    ├── canvas_overlay.dart            # A2UI canvas WebView (with postMessage bridge)
     └── connection_badge.dart          # Connection status indicator
 ```
 
@@ -79,7 +110,7 @@ lib/
 
 ### Prerequisites
 - Flutter SDK 3.10+
-- Android device or emulator
+- Android device or emulator (iOS support coming soon)
 - OpenClaw gateway running and accessible
 
 ### Install
@@ -90,11 +121,29 @@ flutter pub get
 flutter run
 ```
 
+Or download the latest APK from [Releases](https://github.com/cortexuvula/clawreach/releases).
+
 ### Connect
 1. Open the app → Settings (gear icon)
 2. Enter gateway URL: `ws://<your-gateway-ip>:18789`
-3. Enter gateway token
-4. Save → device will auto-pair (approve in OpenClaw)
+3. Optional: Tailscale fallback URL for better reliability
+4. Enter gateway token
+5. Save → device will auto-pair (approve in OpenClaw)
+
+### Optional: Push Notifications (FCM)
+For offline push notifications when the app is closed:
+
+1. **Set up Firebase** - Create a Firebase project and download `google-services.json`
+2. **Run FCM bridge** - Start the FCM bridge service on your OpenClaw host:
+   ```bash
+   node ~/clawd/scripts/fcm-bridge.js
+   ```
+3. **Auto-push daemon** (optional) - For automatic push delivery:
+   ```bash
+   systemctl --user start fcm-auto-push.service
+   ```
+
+ClawReach will auto-register its FCM token with the bridge on connect.
 
 ### Optional: Server-Side Transcription
 For high-quality voice note transcription, run a [faster-whisper](https://github.com/SYSTRAN/faster-whisper) server on port 8014 of your gateway host. ClawReach auto-detects it on connect.
@@ -181,6 +230,40 @@ ClawReach implements the OpenClaw node protocol:
 3. **Auth** — Client signs nonce with Ed25519 private key
 4. **Pair** — If new device, server creates pending request; client retries until approved
 5. **Connected** — Bidirectional messaging: camera snaps, location, canvas, chat, fitness sync
+6. **History Sync** — Request session history via `sessions.history` WebSocket request
+7. **FCM Registration** — Register push notification token with FCM bridge (if available)
+
+## Performance & Offline Support
+
+### Message Caching
+- Last 100 messages cached locally in SharedPreferences
+- Automatic cache on every message sent/received
+- Loaded on app startup for offline viewing
+
+### Message Queue
+- Messages sent while offline are queued automatically
+- Auto-delivered when connection restored
+- Persistent across app restarts
+
+### Session History
+- Fetches last 50 messages from gateway on connect
+- Merges with local cache (no duplicates)
+- Shows messages from all clients (webchat, Signal, etc.)
+
+### Push Notifications
+- FCM delivers notifications when app is closed
+- Tapping notification opens app with full history
+- Smart delivery - only pushes when offline
+
+## Version History
+
+- **v1.1.2** (2026-02-07) - Session history fetching from gateway
+- **v1.1.1** (2026-02-07) - Fixed offline message cache loading
+- **v1.1.0** (2026-02-07) - FCM push notifications, removed background service
+- **v1.0.9** (2026-02-07) - Fixed FCM bridge URL derivation
+- **v1.0.8** (2026-02-07) - FCM integration
+- **v1.0.7** (2026-02-06) - Performance optimizations, camera/location web support
+- **v1.0.6** (2026-02-05) - Canvas postMessage bridge for web platform
 
 ## Built By
 
