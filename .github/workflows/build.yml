@@ -275,7 +275,6 @@ jobs:
           mv artifacts/linux-build/linux-build.tar.gz artifacts/ClawReach-Linux.tar.gz
           mv artifacts/windows-build/windows-build.zip artifacts/ClawReach-Windows.zip
           mv artifacts/macos-build/macos-build.zip artifacts/ClawReach-macOS.zip
-          mv artifacts/web-build/web-build.tar.gz artifacts/ClawReach-Web.tar.gz
 
       - uses: softprops/action-gh-release@v2
         with:
@@ -285,5 +284,4 @@ jobs:
             artifacts/ClawReach-Linux.tar.gz
             artifacts/ClawReach-Windows.zip
             artifacts/ClawReach-macOS.zip
-            artifacts/ClawReach-Web.tar.gz
           generate_release_notes: true
