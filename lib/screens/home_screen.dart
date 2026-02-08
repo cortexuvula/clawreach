@@ -21,7 +21,6 @@ import '../services/connection_coordinator.dart';
 import '../services/gateway_service.dart';
 import '../services/hike_service.dart';
 import '../services/deep_link_service.dart';
-import '../services/foreground_service.dart';
 import '../services/node_connection_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/canvas_overlay.dart';
@@ -98,17 +97,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         // Notify notification service app is backgrounded
         notifications.setBackgrounded(true);
         
-        // If foreground service is running, keep connections alive
-        if (ForegroundServiceManager.isRunning) {
-          debugPrint('💤 App backgrounded — foreground service active, keeping connections');
-          ForegroundServiceManager.updateNotification(
-            text: 'Running in background',
-          );
-        } else {
-          debugPrint('💤 App backgrounded — pausing connections');
-          gateway.setBackgrounded(true);
-          nodeConn.setBackgrounded(true);
-        }
+        // Pause connections when backgrounded (FCM handles offline notifications)
+        debugPrint('💤 App backgrounded — pausing connections');
+        gateway.setBackgrounded(true);
+        nodeConn.setBackgrounded(true);
         break;
       case AppLifecycleState.resumed:
         debugPrint('🔄 App lifecycle: FOREGROUNDED (${state.name})');
@@ -136,11 +128,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             nodeConn.connect(config);
           }
         }
-        if (ForegroundServiceManager.isRunning) {
-          ForegroundServiceManager.updateNotification(
-            text: 'Maintaining gateway connection',
-          );
-        }
+        
         // If neither is connected and we have config, do sequential reconnect
         if (!gateway.isConnected && !nodeConn.isConnected && _config != null) {
           _connectSequential(_config!);
@@ -264,8 +252,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Probe capabilities after operator connects
     context.read<CapabilityService>().probe(config.url);
     
-    // Start foreground service to keep connection alive in background
-    ForegroundServiceManager.start();
   }
 
   void _onConfigSaved(GatewayConfig config) {

@@ -163,7 +163,7 @@ class ClawReachApp extends StatelessWidget {
           useMaterial3: true,
           brightness: Brightness.dark,
         ),
-        home: const WithForegroundTask(child: HomeScreen()),
+        home: const HomeScreen(),
       ),
     );
   }
