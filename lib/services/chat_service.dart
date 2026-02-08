@@ -54,6 +54,11 @@ class ChatService extends ChangeNotifier {
   }
 
   void _onGatewayChanged() {
+    // Load cached messages when session key becomes available
+    if (_gateway.isConnected && _gateway.mainSessionKey != null && !_cacheLoaded) {
+      _loadCachedMessages();
+    }
+    
     // Process queued messages when connection is restored
     if (_gateway.isConnected && _messageQueue.hasQueuedMessages) {
       debugPrint('🔄 Connection restored, processing ${_messageQueue.queueSize} queued messages');
